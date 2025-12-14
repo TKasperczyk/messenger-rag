@@ -1,0 +1,48 @@
+# Binaries
+meta-bridge/messenger-cli
+meta-bridge/cookie-converter
+meta-bridge/import-export
+meta-bridge/milvus-check
+meta-bridge/avatar-sync
+meta-bridge/fts5-setup
+meta-bridge/milvus-index
+meta-bridge/rag-server
+meta-bridge/chunk-generator
+
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.db.bak
+
+# Large generated data
+chunks.jsonl
+
+# Sensitive data
+cookies.json
+*.json.bak
+
+# Go build cache
+.tmp-gocache/
+.tmp-gomodcache/
+meta-bridge/.gocache/
+meta-bridge/.gomodcache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Extracted exports (large data)
+your_facebook_activity/
+
+# Python (legacy scripts in embeddings_runpod/)
+__pycache__/
+*.pyc
+.venv/

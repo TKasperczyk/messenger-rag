@@ -1,0 +1,132 @@
+# Unified RAG Configuration
+# Single source of truth for all components (Go, Python, TypeScript)
+# Version: 1.0.0
+
+# =============================================================================
+# Milvus Configuration
+# =============================================================================
+milvus:
+  address: "localhost:19530"
+
+  # The canonical collection for chunk-based semantic search
+  # This is the ONLY collection that should be used for RAG
+  chunk_collection: "messenger_message_chunks_v2"
+
+  # Legacy collection (DO NOT USE - kept for reference only)
+  # This was used by the old per-message indexing approach
+  legacy_message_collection: "messenger_messages"
+
+  # HNSW index parameters
+  index:
+    type: "HNSW"
+    metric: "COSINE"
+    m: 16           # Number of connections per node
+    ef_construction: 256  # Construction-time search width
+
+  # Search parameters
+  search:
+    ef: 128         # Minimum ef for search (will be max(ef, limit) at runtime)
+    fetch_multiplier: 3  # Fetch 3x results to allow for filtering
+
+# =============================================================================
+# Embedding Configuration
+# =============================================================================
+embedding:
+  # API endpoint (OpenAI-compatible)
+  # For local: LMStudio or Ollama with OpenAI compatibility
+  # For RunPod: Ollama on GPU
+  base_url: "http://127.0.0.1:1234/v1"  # LMStudio
+
+  # Model configuration
+  # Using nomic-embed-text-v1.5 for better Polish language separation
+  # (previously qwen3-embedding-8b but Q4 quantization degraded quality)
+  model: "text-embedding-nomic-embed-text-v1.5"
+  dimension: 768
+
+  # Batch settings for indexing
+  batch_size: 50
+
+# =============================================================================
+# Chunking Configuration
+# =============================================================================
+chunking:
+  version: 2  # Increment when chunking logic changes (triggers reindex)
+
+  # Message coalescing (combine consecutive messages from same sender)
+  coalesce:
+    max_gap_seconds: 120      # Max time between messages to coalesce
+    max_combined_chars: 900   # Max chars before forcing a break
+
+  # Session detection (group messages into conversation sessions)
+  session:
+    gap_minutes: 45           # Minutes of silence = new session
+
+  # Chunk sizing
+  size:
+    target_chars: 900         # Target chunk size
+    max_chars: 1400           # Hard max (never exceed)
+    min_chars: 100            # Don't create tiny chunks
+
+  # Message formatting in chunks
+  format:
+    sender_prefix: true       # Include "[Sender]: " prefix
+    timestamp_format: ""      # Empty = no timestamps in chunk text
+
+# =============================================================================
+# Quality Filters (for indexability)
+# =============================================================================
+quality:
+  # Minimum requirements for a chunk to be indexed
+  min_chars: 250              # Minimum total characters
+  min_alnum_chars: 140        # Minimum alphanumeric characters
+  min_unique_words: 8         # Minimum unique words
+
+  # URL special case: chunks with URLs can be indexed with lower thresholds
+  url_special_case:
+    enabled: true
+    min_alnum_chars: 60       # Lower threshold if chunk has URL
+
+  # Content to filter out (query-time filters)
+  filters:
+    max_url_density: 0.5      # Skip if >50% of content is URLs
+    skip_attachment_only: true  # Skip "sent an attachment" messages
+    skip_base64_blobs: true   # Skip chunks with base64 data
+
+# =============================================================================
+# Hybrid Search Configuration
+# =============================================================================
+hybrid:
+  enabled: true
+
+  # Reciprocal Rank Fusion parameters
+  rrf:
+    k: 60                     # RRF constant (higher = more equal weighting)
+
+  # Component weights (must sum to 1.0)
+  weights:
+    vector: 0.5               # Semantic similarity weight
+    bm25: 0.5                 # Keyword match weight
+
+  # BM25 via SQLite FTS5
+  bm25:
+    table: "chunks_fts"       # FTS5 virtual table name
+
+# =============================================================================
+# Database Paths
+# =============================================================================
+database:
+  sqlite: "messenger.db"      # Main SQLite database
+
+# =============================================================================
+# Metadata (for tracking index state)
+# =============================================================================
+# These values are stored in SQLite sync_metadata table and should match
+# the config used to build the current index. Mismatch = reindex needed.
+metadata:
+  table: "rag_metadata"
+  keys:
+    embedding_model: "rag_embedding_model"
+    embedding_dim: "rag_embedding_dim"
+    chunking_version: "rag_chunking_version"
+    config_hash: "rag_config_hash"
+    indexed_at: "rag_indexed_at"

@@ -1,0 +1,189 @@
+@import 'tailwindcss';
+
+@theme {
+	--font-sans: 'Inter', system-ui, sans-serif;
+	/* Premium dark palette (warm monochrome + amber accent) */
+	--color-bg: #080808;
+	--color-bg-dark: #0a0a0a;
+	--color-bg-darker: #0f0f0f;
+	--color-bg-card: #1c1c1c;
+	--color-bg-card-hover: #242424;
+	--color-border: #303030;
+	--color-primary: #e5a54b;
+	--color-primary-dark: #d08f3d;
+	--color-text: #e8e8e6;
+	--color-text-muted: #a6a29a;
+}
+
+html {
+	font-family: var(--font-sans);
+}
+
+body {
+	background:
+		radial-gradient(900px circle at 12% -10%, rgba(232, 232, 230, 0.05), transparent 46%),
+		radial-gradient(700px circle at 110% 12%, rgba(232, 232, 230, 0.03), transparent 42%),
+		var(--color-bg);
+	color: var(--color-text);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: var(--color-bg-darker);
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--color-border);
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: #3a3a3a;
+}
+
+@layer utilities {
+	/* Subtle amber glow for key accents (numbers, badges, indicators) */
+	.glow-amber {
+		text-shadow:
+			0 0 12px rgba(229, 165, 75, 0.22),
+			0 0 32px rgba(229, 165, 75, 0.12);
+		filter: drop-shadow(0 0 14px rgba(229, 165, 75, 0.14));
+	}
+
+	/* Premium card surface: soft gradient border + gentle depth */
+	.card-premium {
+		border: 1px solid transparent;
+		background-image:
+			linear-gradient(var(--color-bg-card), var(--color-bg-card)),
+			linear-gradient(
+				135deg,
+				rgba(255, 255, 255, 0.08),
+				rgba(229, 165, 75, 0.16),
+				rgba(99, 102, 241, 0.14),
+				rgba(255, 255, 255, 0.06)
+			);
+		background-origin: padding-box, border-box;
+		background-clip: padding-box, border-box;
+		transition:
+			transform 200ms ease,
+			filter 200ms ease,
+			background-image 200ms ease;
+	}
+
+	.card-premium:hover {
+		background-image:
+			linear-gradient(var(--color-bg-card-hover), var(--color-bg-card-hover)),
+			linear-gradient(
+				135deg,
+				rgba(255, 255, 255, 0.10),
+				rgba(229, 165, 75, 0.22),
+				rgba(99, 102, 241, 0.18),
+				rgba(255, 255, 255, 0.07)
+			);
+		transform: translateY(-2px);
+		filter:
+			drop-shadow(0 18px 36px rgba(0, 0, 0, 0.45))
+			drop-shadow(0 0 18px rgba(229, 165, 75, 0.10));
+	}
+
+	/* Subtle left accent strip for “featured” cards */
+	.accent-left {
+		position: relative;
+	}
+
+	.accent-left::before {
+		content: '';
+		position: absolute;
+		inset: 14px auto 14px 0;
+		width: 3px;
+		border-radius: 999px;
+		background: linear-gradient(
+			to bottom,
+			rgba(229, 165, 75, 0),
+			rgba(229, 165, 75, 0.55),
+			rgba(99, 102, 241, 0.40),
+			rgba(229, 165, 75, 0)
+		);
+		opacity: 0.7;
+		box-shadow: 0 0 18px rgba(229, 165, 75, 0.12);
+	}
+
+	/* Active tab underline with a controlled amber glow */
+	.tab-underline {
+		position: relative;
+	}
+
+	.tab-underline::after {
+		content: '';
+		position: absolute;
+		left: 14px;
+		right: 14px;
+		bottom: 4px;
+		height: 2px;
+		border-radius: 999px;
+		background: linear-gradient(
+			90deg,
+			rgba(229, 165, 75, 0),
+			rgba(229, 165, 75, 0.95),
+			rgba(99, 102, 241, 0.65),
+			rgba(229, 165, 75, 0)
+		);
+		box-shadow:
+			0 0 14px rgba(229, 165, 75, 0.25),
+			0 0 28px rgba(229, 165, 75, 0.10);
+	}
+
+	/* Sidebar gets a subtle gradient + inner shadow for separation */
+	.sidebar-surface {
+		background:
+			linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 24%),
+			linear-gradient(90deg, rgba(229, 165, 75, 0.06), rgba(229, 165, 75, 0) 42%),
+			var(--color-bg-darker);
+		box-shadow:
+			inset -1px 0 0 rgba(255, 255, 255, 0.04),
+			inset -18px 0 36px rgba(0, 0, 0, 0.40);
+	}
+
+	/* Progress/metric fill glow – tint via currentColor */
+	.fill-glow {
+		filter: drop-shadow(0 0 12px color-mix(in srgb, currentColor 55%, transparent));
+	}
+
+	/* Chart bars: keep gradient but add glow on hover via parent .group */
+	.chart-bar {
+		transition:
+			opacity 200ms ease,
+			filter 200ms ease,
+			transform 200ms ease;
+		will-change: opacity, filter, transform;
+	}
+
+	.group:hover .chart-bar {
+		opacity: 0.95;
+		transform: translateY(-1px);
+		filter: drop-shadow(0 0 14px rgba(229, 165, 75, 0.18));
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.card-premium {
+			transition: none;
+		}
+
+		.card-premium:hover {
+			transform: none;
+		}
+
+		.chart-bar {
+			transition: none;
+		}
+
+		.group:hover .chart-bar {
+			transform: none;
+		}
+	}
+}
