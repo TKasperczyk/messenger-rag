@@ -36,6 +36,7 @@
 	"dependencies": {
 		"@zilliz/milvus2-sdk-node": "^2.6.5",
 		"better-sqlite3": "^12.5.0",
-		"umap-js": "^1.4.0"
+		"umap-js": "^1.4.0",
+		"yaml": "^2.8.2"
 	}
 }

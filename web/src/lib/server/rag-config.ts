@@ -1,12 +1,13 @@
 /**
  * RAG Configuration for TypeScript/SvelteKit
  *
- * These values should match rag.yaml in the project root.
- * This is a TypeScript mirror to avoid adding yaml parsing dependencies to the web app.
- *
- * IMPORTANT: Keep this in sync with /rag.yaml - if you change values there,
- * update them here too, or consider implementing yaml parsing.
+ * `rag.yaml` is the single source of truth. The web server loads it at runtime
+ * (server-side) to avoid duplicating config defaults in TypeScript.
  */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import YAML from 'yaml';
 
 export interface RagConfig {
 	milvus: {
@@ -59,59 +60,157 @@ export interface RagConfig {
 	};
 }
 
-/**
- * Default configuration matching rag.yaml
- */
-export const ragConfig: RagConfig = {
-	milvus: {
-		address: 'localhost:19530',
-		chunkCollection: 'messenger_message_chunks_v2',
-		legacyMessageCollection: 'messenger_messages',
-		index: {
-			type: 'HNSW',
-			metric: 'COSINE',
-			m: 16,
-			efConstruction: 256
-		},
-		search: {
-			ef: 128,
-			fetchMultiplier: 3
-		}
-	},
-	embedding: {
-		baseUrl: 'http://127.0.0.1:1235/v1',
-		model: 'mmlw-roberta-large',
-		dimension: 1024,
-		batchSize: 32
-	},
-	quality: {
-		minChars: 250,
-		minAlnumChars: 140,
-		minUniqueWords: 8,
-		urlSpecialCase: {
-			enabled: true,
-			minAlnumChars: 60
-		},
-		filters: {
-			maxUrlDensity: 0.5,
-			skipAttachmentOnly: true,
-			skipBase64Blobs: true
-		}
-	},
-	hybrid: {
-		enabled: true,
-		rrf: {
-			k: 60
-		},
-		weights: {
-			vector: 0.5,
-			bm25: 0.5
-		},
-		bm25: {
-			table: 'chunks_fts'
-		}
+let cachedConfig: RagConfig | null = null;
+
+function findRagYamlPath(startDir: string): string {
+	let current = startDir;
+	for (;;) {
+		const candidate = path.join(current, 'rag.yaml');
+		if (fs.existsSync(candidate)) return candidate;
+		const parent = path.dirname(current);
+		if (parent === current) break;
+		current = parent;
 	}
-};
+	throw new Error(`rag.yaml not found starting at: ${startDir}`);
+}
+
+function asObject(value: unknown, name: string): Record<string, unknown> {
+	if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error(`Invalid rag.yaml: expected ${name} to be an object`);
+	}
+	return value as Record<string, unknown>;
+}
+
+function asString(value: unknown, name: string): string {
+	if (typeof value !== 'string' || value.trim() === '') {
+		throw new Error(`Invalid rag.yaml: expected ${name} to be a non-empty string`);
+	}
+	return value;
+}
+
+function asNumber(value: unknown, name: string): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		throw new Error(`Invalid rag.yaml: expected ${name} to be a finite number`);
+	}
+	return value;
+}
+
+function asBoolean(value: unknown, name: string): boolean {
+	if (typeof value !== 'boolean') {
+		throw new Error(`Invalid rag.yaml: expected ${name} to be a boolean`);
+	}
+	return value;
+}
+
+function parseRagYaml(contents: string): RagConfig {
+	const root = asObject(YAML.parse(contents), 'root');
+
+	const milvus = asObject(root.milvus, 'milvus');
+	const milvusIndex = asObject(milvus.index, 'milvus.index');
+	const milvusSearch = asObject(milvus.search, 'milvus.search');
+
+	const embedding = asObject(root.embedding, 'embedding');
+
+	const quality = asObject(root.quality, 'quality');
+	const urlSpecialCase = asObject(quality.url_special_case, 'quality.url_special_case');
+	const qualityFilters = asObject(quality.filters, 'quality.filters');
+
+	const hybrid = asObject(root.hybrid, 'hybrid');
+	const hybridRrf = asObject(hybrid.rrf, 'hybrid.rrf');
+	const hybridWeights = asObject(hybrid.weights, 'hybrid.weights');
+	const hybridBm25 = asObject(hybrid.bm25, 'hybrid.bm25');
+
+	const bm25Table = asString(hybridBm25.table, 'hybrid.bm25.table');
+	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(bm25Table)) {
+		throw new Error(
+			`Invalid rag.yaml: expected hybrid.bm25.table to be a valid SQL identifier, got: ${JSON.stringify(bm25Table)}`
+		);
+	}
+
+	const rrfK = asNumber(hybridRrf.k, 'hybrid.rrf.k');
+	if (rrfK <= 0) {
+		throw new Error(`Invalid rag.yaml: expected hybrid.rrf.k to be > 0`);
+	}
+
+	const weightVector = asNumber(hybridWeights.vector, 'hybrid.weights.vector');
+	const weightBm25 = asNumber(hybridWeights.bm25, 'hybrid.weights.bm25');
+	if (weightVector < 0 || weightBm25 < 0 || weightVector+weightBm25 <= 0) {
+		throw new Error(`Invalid rag.yaml: expected hybrid.weights to have a positive sum`);
+	}
+
+	return {
+		milvus: {
+			address: asString(milvus.address, 'milvus.address'),
+			chunkCollection: asString(milvus.chunk_collection, 'milvus.chunk_collection'),
+			legacyMessageCollection: asString(
+				milvus.legacy_message_collection,
+				'milvus.legacy_message_collection'
+			),
+			index: {
+				type: asString(milvusIndex.type, 'milvus.index.type'),
+				metric: asString(milvusIndex.metric, 'milvus.index.metric'),
+				m: asNumber(milvusIndex.m, 'milvus.index.m'),
+				efConstruction: asNumber(milvusIndex.ef_construction, 'milvus.index.ef_construction')
+			},
+			search: {
+				ef: asNumber(milvusSearch.ef, 'milvus.search.ef'),
+				fetchMultiplier: asNumber(milvusSearch.fetch_multiplier, 'milvus.search.fetch_multiplier')
+			}
+		},
+		embedding: {
+			baseUrl: asString(embedding.base_url, 'embedding.base_url'),
+			model: asString(embedding.model, 'embedding.model'),
+			dimension: asNumber(embedding.dimension, 'embedding.dimension'),
+			batchSize: asNumber(embedding.batch_size, 'embedding.batch_size')
+		},
+		quality: {
+			minChars: asNumber(quality.min_chars, 'quality.min_chars'),
+			minAlnumChars: asNumber(quality.min_alnum_chars, 'quality.min_alnum_chars'),
+			minUniqueWords: asNumber(quality.min_unique_words, 'quality.min_unique_words'),
+			urlSpecialCase: {
+				enabled: asBoolean(urlSpecialCase.enabled, 'quality.url_special_case.enabled'),
+				minAlnumChars: asNumber(
+					urlSpecialCase.min_alnum_chars,
+					'quality.url_special_case.min_alnum_chars'
+				)
+			},
+			filters: {
+				maxUrlDensity: asNumber(qualityFilters.max_url_density, 'quality.filters.max_url_density'),
+				skipAttachmentOnly: asBoolean(
+					qualityFilters.skip_attachment_only,
+					'quality.filters.skip_attachment_only'
+				),
+				skipBase64Blobs: asBoolean(
+					qualityFilters.skip_base64_blobs,
+					'quality.filters.skip_base64_blobs'
+				)
+			}
+		},
+		hybrid: {
+			enabled: asBoolean(hybrid.enabled, 'hybrid.enabled'),
+			rrf: {
+				k: rrfK
+			},
+			weights: {
+				vector: weightVector,
+				bm25: weightBm25
+			},
+			bm25: {
+				table: bm25Table
+			}
+		}
+	};
+}
+
+export function getRagConfig(): RagConfig {
+	if (cachedConfig) return cachedConfig;
+	const configPath = findRagYamlPath(process.cwd());
+	const contents = fs.readFileSync(configPath, 'utf8');
+	cachedConfig = parseRagYaml(contents);
+	return cachedConfig;
+}
+
+export const ragConfig: RagConfig = getRagConfig();
 
 // Export individual config sections for convenience
 export const milvusConfig = ragConfig.milvus;

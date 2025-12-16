@@ -173,16 +173,14 @@ func (s *Socket) handlePublishResponseEvent(ctx context.Context, resp *Event_Pub
 	if ctx.Err() != nil {
 		return false
 	}
-	go func() {
-		if resp.QoS == packets.QOS_LEVEL_1 {
-			err := s.sendData(binary.BigEndian.AppendUint16([]byte{packets.PUBACK << 4, 2}, resp.MessageIdentifier))
-			if err != nil {
-				s.client.Logger.Err(err).Uint16("message_id", resp.MessageIdentifier).Msg("Failed to send puback")
-			}
-		} else if resp.QoS == packets.QOS_LEVEL_2 {
-			s.client.Logger.Error().Msg("Got packet with QoS level 2")
+	if resp.QoS == packets.QOS_LEVEL_1 {
+		err := s.sendData(ctx, binary.BigEndian.AppendUint16([]byte{packets.PUBACK << 4, 2}, resp.MessageIdentifier))
+		if err != nil {
+			s.client.Logger.Err(err).Uint16("message_id", resp.MessageIdentifier).Msg("Failed to send puback")
 		}
-	}()
+	} else if resp.QoS == packets.QOS_LEVEL_2 {
+		s.client.Logger.Error().Msg("Got packet with QoS level 2")
+	}
 	return false
 }
 

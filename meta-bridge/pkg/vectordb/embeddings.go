@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // EmbeddingClient generates embeddings via LMStudio's OpenAI-compatible API
@@ -114,7 +115,11 @@ func (c *EmbeddingClient) Embed(ctx context.Context, text string) ([]float32, er
 		if attempt > 0 {
 			// Wait for LMStudio to reload the model (takes ~5-10s)
 			waitTime := 10 * time.Second
-			log.Printf("[embed] Retry %d/%d, waiting %v for model reload...", attempt+1, maxRetries, waitTime)
+			log.Warn().
+				Int("attempt", attempt+1).
+				Int("max_retries", maxRetries).
+				Dur("wait", waitTime).
+				Msg("Retrying embedding request after model reload")
 			time.Sleep(waitTime)
 		}
 
@@ -148,14 +153,16 @@ func (c *EmbeddingClient) Embed(ctx context.Context, text string) ([]float32, er
 
 		var embResp embeddingResponse
 		if err := json.Unmarshal(output, &embResp); err != nil {
-			lastErr = fmt.Errorf("failed to decode response: %w (output: %s)", err, string(output))
+			lastErr = fmt.Errorf("failed to decode embedding response: %w", err)
 			continue
 		}
 
 		if len(embResp.Data) == 0 {
 			// Model crashed - LMStudio returns empty data, will auto-reload
-			lastErr = fmt.Errorf("model crashed, waiting for reload (response: %s)", string(output))
-			log.Printf("[embed] Model crashed on attempt %d, will retry", attempt+1)
+			lastErr = fmt.Errorf("model crashed, waiting for reload")
+			log.Warn().
+				Int("attempt", attempt+1).
+				Msg("Embedding model crashed, will retry")
 			continue
 		}
 
@@ -170,7 +177,7 @@ func (c *EmbeddingClient) Embed(ctx context.Context, text string) ([]float32, er
 		return embedding, nil
 	}
 
-	log.Printf("[embed] FAILED after %d retries", maxRetries)
+	log.Error().Int("max_retries", maxRetries).Err(lastErr).Msg("Embedding request failed after retries")
 	return nil, fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
@@ -204,7 +211,11 @@ func (c *EmbeddingClient) EmbedBatch(ctx context.Context, texts []string) ([][]f
 		if attempt > 0 {
 			// Wait for LMStudio to reload the model (takes ~10-15s for 8B model)
 			waitTime := 15 * time.Second
-			log.Printf("[embed-batch] Retry %d/%d, waiting %v for model reload...", attempt+1, maxRetries, waitTime)
+			log.Warn().
+				Int("attempt", attempt+1).
+				Int("max_retries", maxRetries).
+				Dur("wait", waitTime).
+				Msg("Retrying batch embedding request after model reload")
 			time.Sleep(waitTime)
 		}
 
@@ -233,31 +244,34 @@ func (c *EmbeddingClient) EmbedBatch(ctx context.Context, texts []string) ([][]f
 
 		if err != nil {
 			lastErr = fmt.Errorf("curl failed: %w", err)
-			log.Printf("[embed-batch] Request failed on attempt %d: %v", attempt+1, err)
+			log.Warn().
+				Int("attempt", attempt+1).
+				Err(err).
+				Msg("Batch embedding request failed")
 			continue
 		}
 
 		// Check for error response (model crashed)
 		if bytes.Contains(output, []byte("unloaded or crashed")) || bytes.Contains(output, []byte("\"error\"")) {
-			lastErr = fmt.Errorf("model crashed (response: %s)", string(output))
-			// Log first text in batch to help identify problematic content
-			preview := sanitized[0]
-			if len(preview) > 100 {
-				preview = preview[:100] + "..."
-			}
-			log.Printf("[embed-batch] Model crashed on attempt %d (batch size %d, first text: %q), will retry", attempt+1, len(texts), preview)
+			lastErr = fmt.Errorf("model crashed (error response)")
+			log.Warn().
+				Int("attempt", attempt+1).
+				Int("batch_size", len(texts)).
+				Msg("Embedding model crashed during batch request, will retry")
 			continue
 		}
 
 		var embResp embeddingResponse
 		if err := json.Unmarshal(output, &embResp); err != nil {
-			lastErr = fmt.Errorf("failed to decode response: %w (output: %s)", err, string(output))
+			lastErr = fmt.Errorf("failed to decode embedding response: %w", err)
 			continue
 		}
 
 		if len(embResp.Data) == 0 {
 			lastErr = fmt.Errorf("empty response, model may have crashed")
-			log.Printf("[embed-batch] Empty response on attempt %d, will retry", attempt+1)
+			log.Warn().
+				Int("attempt", attempt+1).
+				Msg("Empty embedding batch response, will retry")
 			continue
 		}
 
@@ -281,7 +295,7 @@ func (c *EmbeddingClient) EmbedBatch(ctx context.Context, texts []string) ([][]f
 		return result, nil
 	}
 
-	log.Printf("[embed-batch] FAILED after %d retries", maxRetries)
+	log.Error().Int("max_retries", maxRetries).Err(lastErr).Msg("Batch embedding request failed after retries")
 	return nil, fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 

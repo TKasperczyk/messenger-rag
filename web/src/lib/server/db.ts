@@ -1,12 +1,6 @@
-import Database from 'better-sqlite3';
-import { DB_PATH } from '$env/static/private';
+import { getDb } from './sqlite-db';
 
-const dbPath = DB_PATH || '../meta-bridge/messenger.db';
-
-export const db = new Database(dbPath, { readonly: true });
-
-// Enable WAL mode for better concurrent reads
-db.pragma('journal_mode = WAL');
+const db = getDb();
 
 // Get current user ID and name from sync_metadata
 const currentUserRow = db.prepare(

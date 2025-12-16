@@ -48,3 +48,5 @@ __pycache__/
 *.pyc
 .venv/
 meta-bridge/rag-server-fts5
+.cache/
+.pnpm-store/

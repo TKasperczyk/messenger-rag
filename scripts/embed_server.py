@@ -37,4 +37,4 @@ def models():
     return {"data": [{"id": "mmlw-roberta-large", "object": "model"}]}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=1235)
+    uvicorn.run(app, host="127.0.0.1", port=1235)

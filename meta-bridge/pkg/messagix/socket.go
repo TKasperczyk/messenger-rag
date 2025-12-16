@@ -124,6 +124,7 @@ func (c *Client) GetDialer() *websocket.Dialer {
 		}
 	}
 	if DisableTLSVerification {
+		warnTLSVerificationDisabled(c.Logger)
 		dialer.TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true,
 		}
@@ -148,7 +149,7 @@ func (s *Socket) Connect(ctx context.Context) error {
 	}
 
 	s.conn = conn
-	err = s.sendConnectPacket()
+	err = s.sendConnectPacket(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: %w", socket.ErrSendConnect, err)
 	}
@@ -241,7 +242,11 @@ func (s *Socket) readLoop(ctx context.Context, conn *websocket.Conn) error {
 					closeDueToError("connect ack failed")
 				}
 			default:
-				panic(fmt.Errorf("invalid type %T in websocket item queue", item))
+				queueErr := fmt.Errorf("invalid type %T in websocket item queue", item)
+				closeErr.CompareAndSwap(nil, ptr(queueErr))
+				s.client.Logger.Error().Err(queueErr).Msg("Invalid type in websocket item queue")
+				closeDueToError("invalid websocket item queue")
+				return
 			}
 		}
 	}()
@@ -293,7 +298,7 @@ func (s *Socket) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		for {
 			select {
 			case <-ticker.C:
-				err := s.sendData([]byte{packets.PINGREQ << 4, 0})
+				err := s.sendData(ctx, []byte{packets.PINGREQ << 4, 0})
 				if err != nil {
 					closeErr.CompareAndSwap(nil, ptr(fmt.Errorf("failed to send ping: %w", err)))
 					s.client.Logger.Err(err).Msg("Error sending ping")
@@ -333,13 +338,22 @@ func (s *Socket) readLoop(ctx context.Context, conn *websocket.Conn) error {
 	}
 }
 
-func (s *Socket) sendData(data []byte) error {
+func (s *Socket) sendData(ctx context.Context, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conn := s.conn
 	if conn == nil {
 		return fmt.Errorf("not connected")
 	}
+	writeDeadline := time.Now().Add(packetTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(writeDeadline) {
+		writeDeadline = ctxDeadline
+	}
+	_ = conn.SetWriteDeadline(writeDeadline)
+	defer func() { _ = conn.SetWriteDeadline(time.Time{}) }()
 	err := conn.WriteMessage(websocket.BinaryMessage, data)
 	if err != nil {
 		return fmt.Errorf("failed to write to websocket: %w", err)
@@ -358,7 +372,7 @@ func (s *Socket) SafePacketID() uint16 {
 	return s.packetsSent
 }
 
-func (s *Socket) sendConnectPacket() error {
+func (s *Socket) sendConnectPacket(ctx context.Context) error {
 	connectAdditionalData, err := s.newConnectJSON()
 	if err != nil {
 		return err
@@ -369,7 +383,7 @@ func (s *Socket) sendConnectPacket() error {
 	if err != nil {
 		return err
 	}
-	return s.sendData(connectPayload)
+	return s.sendData(ctx, connectPayload)
 }
 
 func (s *Socket) sendSubscribePacket(ctx context.Context, topic Topic, qos packets.QoS, wait bool) (*Event_SubscribeACK, error) {
@@ -378,7 +392,7 @@ func (s *Socket) sendSubscribePacket(ctx context.Context, topic Topic, qos packe
 		return nil, err
 	}
 
-	err = s.sendData(subscribeRequestPayload)
+	err = s.sendData(ctx, subscribeRequestPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +417,7 @@ func (s *Socket) sendPublishPacket(ctx context.Context, topic Topic, jsonData st
 		return packetId, err
 	}
 
-	err = s.sendData(publishRequestPayload)
+	err = s.sendData(ctx, publishRequestPayload)
 	if err != nil {
 		s.responseHandler.deleteDetails(packetId, PacketChannel)
 		s.responseHandler.deleteDetails(packetId, RequestChannel)

@@ -41,7 +41,7 @@ if [ ! -f "$COOKIES_FILE" ]; then
 fi
 
 # Check if embedding server is running
-if ! curl -s http://localhost:1235/v1/models > /dev/null 2>&1; then
+if ! curl -s http://127.0.0.1:1235/v1/models > /dev/null 2>&1; then
     echo -e "${RED}Error: Embedding server not running on port 1235${NC}"
     echo "Start it with: python scripts/embed_server.py"
     exit 1

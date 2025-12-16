@@ -196,7 +196,16 @@ func (c *Client) MakeRequest(ctx context.Context, url string, method string, hea
 			Str("method", method).
 			Dur("duration", dur).
 			Msg("Request failed, retrying")
-		time.Sleep(time.Duration(attempts) * 3 * time.Second)
+		backoff := time.Duration(attempts) * 3 * time.Second
+		timer := time.NewTimer(backoff)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, nil, ctx.Err()
+		}
 	}
 }
 
@@ -213,21 +222,19 @@ func (c *Client) makeRequestDirect(ctx context.Context, url string, method strin
 	newRequest.Header = headers
 
 	response, err := c.http.Do(newRequest)
-	defer func() {
-		if response != nil && response.Body != nil {
-			_ = response.Body.Close()
-		}
-	}()
 	if err != nil {
 		c.UpdateProxy(fmt.Sprintf("http request error: %v", err.Error()))
 		return nil, nil, fmt.Errorf("%w: %w", ErrRequestFailed, err)
 	}
 
-	responseBody, err := io.ReadAll(response.Body)
+	body := response.Body
+	responseBody, err := io.ReadAll(body)
+	_ = body.Close()
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", ErrResponseReadFailed, err)
 	}
 
+	response.Body = io.NopCloser(bytes.NewReader(responseBody))
 	return response, responseBody, nil
 }
 

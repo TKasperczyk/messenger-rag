@@ -14,8 +14,8 @@ function transformGoHit(hit: SearchHit) {
 
 	return {
 		message_id: hit.chunk_id,
-		thread_id: String(hit.thread_id),
-		sender_id: String(hit.participant_ids[0] || 0),
+		thread_id: hit.thread_id,
+		sender_id: hit.participant_ids[0] ?? '0',
 		sender_name: primarySender,
 		thread_name: hit.thread_name,
 		text: hit.text,
@@ -129,7 +129,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	const query = url.searchParams.get('q');
 	const limitParam = parseInt(url.searchParams.get('limit') || '20');
 	const mode = url.searchParams.get('mode') || 'vector';
-	const contextRadius = parseInt(url.searchParams.get('context') || '1');
+	const contextRadiusParam = url.searchParams.get('context');
+	const contextRadiusParsed = parseInt(contextRadiusParam || '1');
+	const contextRadius = Number.isNaN(contextRadiusParsed)
+		? 1
+		: Math.max(0, Math.min(contextRadiusParsed, 10));
 
 	if (!query) {
 		throw error(400, 'Query parameter "q" is required');
@@ -192,7 +196,6 @@ export const GET: RequestHandler = async ({ url }) => {
 
 		throw error(400, `Unknown mode: ${mode}`);
 	} catch (err) {
-		console.error('Semantic search failed:', err);
 		if (err && typeof err === 'object' && 'status' in err) {
 			throw err as any;
 		}

@@ -1,25 +1,11 @@
-import Database from 'better-sqlite3';
-import { DB_PATH } from '$env/static/private';
+import { getDb } from './sqlite-db';
 import { hybridConfig } from './rag-config';
 
-const dbPath = DB_PATH || '../meta-bridge/messenger.db';
-
-let db: Database.Database | null = null;
-
-const DEFAULT_BM25_TABLE = 'chunks_fts';
-const bm25Table =
-	/^[A-Za-z_][A-Za-z0-9_]*$/.test(hybridConfig.bm25.table) ? hybridConfig.bm25.table : DEFAULT_BM25_TABLE;
-
-export function getDb(): Database.Database {
-	if (!db) {
-		db = new Database(dbPath, { readonly: true });
-	}
-	return db;
-}
+const bm25Table = hybridConfig.bm25.table;
 
 export interface FtsSearchResult {
 	chunk_id: string;
-	thread_id: number;
+	thread_id: string;
 	thread_name: string | null;
 	session_idx: number;
 	chunk_idx: number;
@@ -55,7 +41,7 @@ export function ftsSearch(query: string, limit = 50): FtsSearchResult[] {
 	const stmt = db.prepare(`
 		SELECT
 			c.chunk_id,
-			c.thread_id,
+			CAST(c.thread_id AS TEXT) as thread_id,
 			c.thread_name,
 			c.session_idx,
 			c.chunk_idx,
@@ -81,7 +67,7 @@ export function ftsSearch(query: string, limit = 50): FtsSearchResult[] {
 
 export interface ChunkContext {
 	chunk_id: string;
-	thread_id: number;
+	thread_id: string;
 	thread_name: string | null;
 	session_idx: number;
 	chunk_idx: number;
@@ -99,7 +85,7 @@ export interface ChunkContext {
  * Get neighboring chunks for context expansion
  */
 export function getChunkContext(
-	threadId: number,
+	threadId: string,
 	sessionIdx: number,
 	chunkIdx: number,
 	radius = 1
@@ -109,7 +95,7 @@ export function getChunkContext(
 	const stmt = db.prepare(`
 		SELECT
 			chunk_id,
-			thread_id,
+			CAST(thread_id AS TEXT) as thread_id,
 			thread_name,
 			session_idx,
 			chunk_idx,
@@ -140,7 +126,7 @@ export function getChunkById(chunkId: string): ChunkContext | null {
 	const stmt = db.prepare(`
 		SELECT
 			chunk_id,
-			thread_id,
+			CAST(thread_id AS TEXT) as thread_id,
 			thread_name,
 			session_idx,
 			chunk_idx,

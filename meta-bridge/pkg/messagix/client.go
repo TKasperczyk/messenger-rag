@@ -40,8 +40,8 @@ type Config struct {
 
 type Client struct {
 	Facebook *FacebookMethods
-	Logger    zerolog.Logger
-	Platform  types.Platform
+	Logger   zerolog.Logger
+	Platform types.Platform
 
 	http         *http.Client
 	socket       *Socket
@@ -75,6 +75,16 @@ type Client struct {
 var DisableTLSVerification = false
 var MaxConnectBackoff = 5 * time.Minute
 
+var tlsVerificationDisabledWarnOnce sync.Once
+
+func warnTLSVerificationDisabled(logger zerolog.Logger) {
+	tlsVerificationDisabledWarnOnce.Do(func() {
+		logger.Warn().
+			Bool("insecure_skip_verify", true).
+			Msg("SECURITY WARNING: TLS certificate verification is DISABLED (InsecureSkipVerify=true). This is for local development only and enables MITM attacks.")
+	})
+}
+
 func NewClient(cookies *cookies.Cookies, logger zerolog.Logger, cfg *Config) *Client {
 	if cookies.Platform == types.Unset {
 		panic("messagix: platform must be set in cookies")
@@ -101,6 +111,7 @@ func NewClient(cookies *cookies.Cookies, logger zerolog.Logger, cfg *Config) *Cl
 	}
 	cli.connectionLoopStopped.Set()
 	if DisableTLSVerification {
+		warnTLSVerificationDisabled(cli.Logger)
 		cli.http.Transport.(*http.Transport).TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true,
 		}

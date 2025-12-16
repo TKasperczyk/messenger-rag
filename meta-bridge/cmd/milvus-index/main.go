@@ -20,9 +20,9 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/milvus-io/milvus-sdk-go/v2/client"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -52,7 +52,7 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	// Load configuration
-	cfg, err := loadConfig()
+	cfg, err := ragconfig.LoadFromFlagOrDir(*cfgPath, ".")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load configuration")
 	}
@@ -209,13 +209,6 @@ func main() {
 	}
 }
 
-func loadConfig() (*ragconfig.Config, error) {
-	if *cfgPath != "" {
-		return ragconfig.Load(*cfgPath)
-	}
-	return ragconfig.LoadFromDir(".")
-}
-
 func dropCollection(ctx context.Context, c client.Client, collection string) error {
 	exists, err := c.HasCollection(ctx, collection)
 	if err != nil {
@@ -250,8 +243,8 @@ func createCollection(ctx context.Context, c client.Client, cfg *ragconfig.Confi
 				DataType: entity.FieldTypeInt64,
 			},
 			{
-				Name:     "thread_name",
-				DataType: entity.FieldTypeVarChar,
+				Name:       "thread_name",
+				DataType:   entity.FieldTypeVarChar,
 				TypeParams: map[string]string{"max_length": "512"},
 			},
 			{
@@ -263,23 +256,23 @@ func createCollection(ctx context.Context, c client.Client, cfg *ragconfig.Confi
 				DataType: entity.FieldTypeInt16,
 			},
 			{
-				Name:     "participant_ids",
-				DataType: entity.FieldTypeVarChar,
+				Name:       "participant_ids",
+				DataType:   entity.FieldTypeVarChar,
 				TypeParams: map[string]string{"max_length": "1024"},
 			},
 			{
-				Name:     "participant_names",
-				DataType: entity.FieldTypeVarChar,
+				Name:       "participant_names",
+				DataType:   entity.FieldTypeVarChar,
 				TypeParams: map[string]string{"max_length": "2048"},
 			},
 			{
-				Name:     "text",
-				DataType: entity.FieldTypeVarChar,
+				Name:       "text",
+				DataType:   entity.FieldTypeVarChar,
 				TypeParams: map[string]string{"max_length": "8192"},
 			},
 			{
-				Name:     "message_ids",
-				DataType: entity.FieldTypeVarChar,
+				Name:       "message_ids",
+				DataType:   entity.FieldTypeVarChar,
 				TypeParams: map[string]string{"max_length": "8192"},
 			},
 			{
@@ -295,8 +288,8 @@ func createCollection(ctx context.Context, c client.Client, cfg *ragconfig.Confi
 				DataType: entity.FieldTypeInt16,
 			},
 			{
-				Name:     "embedding",
-				DataType: entity.FieldTypeFloatVector,
+				Name:       "embedding",
+				DataType:   entity.FieldTypeFloatVector,
 				TypeParams: map[string]string{"dim": fmt.Sprintf("%d", dim)},
 			},
 		},

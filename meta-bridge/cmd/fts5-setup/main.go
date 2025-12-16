@@ -52,7 +52,7 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	// Load configuration
-	cfg, err := loadConfig()
+	cfg, err := ragconfig.LoadFromFlagOrDir(*cfgPath, ".")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load configuration")
 	}
@@ -125,13 +125,6 @@ func main() {
 	fmt.Println("Tables created:")
 	fmt.Println("  - chunks: Full chunk data")
 	fmt.Printf("  - %s: FTS5 virtual table for BM25 search\n", ftsTable)
-}
-
-func loadConfig() (*ragconfig.Config, error) {
-	if *cfgPath != "" {
-		return ragconfig.Load(*cfgPath)
-	}
-	return ragconfig.LoadFromDir(".")
 }
 
 func createTables(ctx context.Context, db *sql.DB, ftsTable string) error {

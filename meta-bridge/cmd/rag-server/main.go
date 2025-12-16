@@ -30,7 +30,7 @@ import (
 )
 
 var (
-	addr    = flag.String("addr", ":8090", "HTTP listen address")
+	addr    = flag.String("addr", "127.0.0.1:8090", "HTTP listen address (default: loopback only)")
 	dbPath  = flag.String("db", "", "Path to SQLite database (defaults to database.sqlite from config)")
 	cfgPath = flag.String("config", "", "Path to rag.yaml (auto-detected if not specified)")
 	debug   = flag.Bool("debug", false, "Enable debug logging")
@@ -49,8 +49,12 @@ func main() {
 		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	}
 
+	if *corsAny {
+		log.Warn().Msg("SECURITY WARNING: -cors-any is enabled; Access-Control-Allow-Origin will be '*'. Use only for local development.")
+	}
+
 	// Load configuration
-	cfg, err := loadConfig()
+	cfg, err := ragconfig.LoadFromFlagOrDir(*cfgPath, ".")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load configuration")
 	}
@@ -152,13 +156,6 @@ func main() {
 	log.Info().Msg("Server stopped")
 }
 
-func loadConfig() (*ragconfig.Config, error) {
-	if *cfgPath != "" {
-		return ragconfig.Load(*cfgPath)
-	}
-	return ragconfig.LoadFromDir(".")
-}
-
 // searchHandler handles GET /search requests
 func searchHandler(svc *rag.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +191,7 @@ func searchHandler(svc *rag.Service) http.HandlerFunc {
 
 		resp, err := svc.Search(r.Context(), req)
 		if err != nil {
-			log.Error().Err(err).Str("query", req.Query).Msg("Search failed")
+			log.Error().Err(err).Msg("Search failed")
 			writeError(w, http.StatusInternalServerError, "search failed")
 			return
 		}
@@ -221,7 +218,7 @@ func searchPostHandler(svc *rag.Service) http.HandlerFunc {
 
 		resp, err := svc.Search(r.Context(), req)
 		if err != nil {
-			log.Error().Err(err).Str("query", req.Query).Msg("Search failed")
+			log.Error().Err(err).Msg("Search failed")
 			writeError(w, http.StatusInternalServerError, "search failed")
 			return
 		}
@@ -272,7 +269,6 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		log.Info().
 			Str("method", r.Method).
 			Str("path", r.URL.Path).
-			Str("query", r.URL.RawQuery).
 			Int("status", wrapped.status).
 			Dur("duration", time.Since(start)).
 			Msg("HTTP request")

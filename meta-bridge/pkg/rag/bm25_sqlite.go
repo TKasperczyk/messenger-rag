@@ -3,7 +3,6 @@ package rag
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -159,55 +158,33 @@ func (s *SQLiteBM25Searcher) Stats(ctx context.Context) (SQLiteStats, error) {
 }
 
 // buildFTSQuery converts user input to FTS5 query syntax.
-// Uses AND by default for better precision. Use "|" to explicitly request OR.
+// Uses OR between terms for broad recall (keep consistent with the web UI).
 // Examples:
-//   - "cat dog"       -> "cat" AND "dog"
-//   - "cat | dog"     -> "cat" OR "dog"
-//   - "cat dog | fish" -> "cat" AND "dog" OR "fish"
+//   - "cat dog"   -> "cat" OR "dog"
+//   - "cat | dog" -> "cat" OR "dog"
 func buildFTSQuery(query string) string {
 	// Remove quotes (we'll add our own)
 	query = strings.ReplaceAll(query, `"`, "")
 	query = strings.ReplaceAll(query, `'`, "")
+	query = strings.ReplaceAll(query, "|", " ")
 
-	// Split by "|" to find explicit OR groups
-	orParts := strings.Split(query, "|")
-
-	var orGroups []string
-	for _, part := range orParts {
-		part = strings.TrimSpace(part)
-		if part == "" {
+	words := strings.Fields(query)
+	quoted := make([]string, 0, len(words))
+	for _, w := range words {
+		if len(w) <= 1 {
 			continue
 		}
-
-		// Split into words within each OR group
-		words := strings.Fields(part)
-
-		// Filter and quote words
-		var quoted []string
-		for _, w := range words {
-			// Skip very short words
-			if len(w) <= 1 {
-				continue
-			}
-			// Escape any remaining special characters
-			w = escapeFTSWord(w)
-			if w != "" {
-				quoted = append(quoted, fmt.Sprintf(`"%s"`, w))
-			}
-		}
-
-		if len(quoted) > 0 {
-			// AND within each group
-			orGroups = append(orGroups, strings.Join(quoted, " AND "))
+		w = escapeFTSWord(w)
+		if w != "" {
+			quoted = append(quoted, fmt.Sprintf(`"%s"`, w))
 		}
 	}
 
-	if len(orGroups) == 0 {
+	if len(quoted) == 0 {
 		return ""
 	}
 
-	// OR between groups (if user explicitly used "|")
-	return strings.Join(orGroups, " OR ")
+	return strings.Join(quoted, " OR ")
 }
 
 // escapeFTSWord escapes special FTS5 characters in a word
@@ -223,61 +200,4 @@ func escapeFTSWord(word string) string {
 		`^`, ``,
 	)
 	return replacer.Replace(word)
-}
-
-// parseIntArray parses a JSON array of integers
-func parseIntArray(s string) []int64 {
-	if s == "" {
-		return nil
-	}
-
-	var arr []interface{}
-	if err := json.Unmarshal([]byte(s), &arr); err != nil {
-		return nil
-	}
-
-	result := make([]int64, 0, len(arr))
-	for _, v := range arr {
-		switch n := v.(type) {
-		case float64:
-			result = append(result, int64(n))
-		case int64:
-			result = append(result, n)
-		case int:
-			result = append(result, int64(n))
-		}
-	}
-	return result
-}
-
-// parseStringArray parses a JSON array of strings
-func parseStringArray(s string) []string {
-	if s == "" {
-		return nil
-	}
-
-	var arr []string
-	if err := json.Unmarshal([]byte(s), &arr); err != nil {
-		// Try as array of interfaces (mixed types)
-		var mixed []interface{}
-		if err := json.Unmarshal([]byte(s), &mixed); err != nil {
-			return nil
-		}
-		result := make([]string, 0, len(mixed))
-		for _, v := range mixed {
-			if str, ok := v.(string); ok && str != "" {
-				result = append(result, str)
-			}
-		}
-		return result
-	}
-
-	// Filter empty strings
-	result := make([]string, 0, len(arr))
-	for _, str := range arr {
-		if str != "" {
-			result = append(result, str)
-		}
-	}
-	return result
 }

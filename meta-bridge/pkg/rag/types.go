@@ -5,7 +5,65 @@
 // and future MCP server should all use this package.
 package rag
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
+)
+
+// Int64Strings marshals int64 values as JSON strings to preserve precision in JavaScript.
+type Int64Strings []int64
+
+func (ids Int64Strings) MarshalJSON() ([]byte, error) {
+	if ids == nil {
+		return []byte("null"), nil
+	}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strconv.FormatInt(id, 10)
+	}
+	return json.Marshal(out)
+}
+
+func (ids *Int64Strings) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*ids = nil
+		return nil
+	}
+
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	out := make([]int64, 0, len(raw))
+	for _, item := range raw {
+		var n int64
+		if err := json.Unmarshal(item, &n); err == nil {
+			out = append(out, n)
+			continue
+		}
+
+		var s string
+		if err := json.Unmarshal(item, &s); err == nil {
+			if s == "" {
+				continue
+			}
+			parsed, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			out = append(out, parsed)
+			continue
+		}
+
+		return fmt.Errorf("invalid int64 string: %s", string(item))
+	}
+
+	*ids = out
+	return nil
+}
 
 // SearchMode specifies the search strategy
 type SearchMode string
@@ -59,11 +117,11 @@ type Hit struct {
 	Chunk
 
 	// Scoring info
-	VectorRank *int     `json:"vector_rank"` // nil if not in vector results
+	VectorRank  *int     `json:"vector_rank"` // nil if not in vector results
 	VectorScore *float64 `json:"vector_score"`
-	BM25Rank   *int     `json:"bm25_rank"`   // nil if not in BM25 results
-	BM25Score  *float64 `json:"bm25_score"`
-	RrfScore   *float64 `json:"rrf_score"`   // nil for single-mode searches
+	BM25Rank    *int     `json:"bm25_rank"` // nil if not in BM25 results
+	BM25Score   *float64 `json:"bm25_score"`
+	RrfScore    *float64 `json:"rrf_score"` // nil for single-mode searches
 
 	// Context (only populated if context > 0)
 	ContextBefore []ContextChunk `json:"context_before,omitempty"`
@@ -72,18 +130,18 @@ type Hit struct {
 
 // Chunk represents a message chunk from the database
 type Chunk struct {
-	ChunkID          string   `json:"chunk_id"`
-	ThreadID         int64    `json:"thread_id"`
-	ThreadName       string   `json:"thread_name"`
-	ParticipantIDs   []int64  `json:"participant_ids"`
-	ParticipantNames []string `json:"participant_names"`
-	Text             string   `json:"text"`
-	MessageIDs       []string `json:"message_ids"`
-	StartTimestampMs int64    `json:"start_timestamp_ms"`
-	EndTimestampMs   int64    `json:"end_timestamp_ms"`
-	MessageCount     int      `json:"message_count"`
-	SessionIdx       int      `json:"session_idx"`
-	ChunkIdx         int      `json:"chunk_idx"`
+	ChunkID          string       `json:"chunk_id"`
+	ThreadID         int64        `json:"thread_id,string"`
+	ThreadName       string       `json:"thread_name"`
+	ParticipantIDs   Int64Strings `json:"participant_ids"`
+	ParticipantNames []string     `json:"participant_names"`
+	Text             string       `json:"text"`
+	MessageIDs       []string     `json:"message_ids"`
+	StartTimestampMs int64        `json:"start_timestamp_ms"`
+	EndTimestampMs   int64        `json:"end_timestamp_ms"`
+	MessageCount     int          `json:"message_count"`
+	SessionIdx       int          `json:"session_idx"`
+	ChunkIdx         int          `json:"chunk_idx"`
 }
 
 // ContextChunk is a simplified chunk for context display
@@ -110,10 +168,10 @@ type BM25Hit struct {
 
 // StatsResponse contains collection/database statistics
 type StatsResponse struct {
-	Milvus    MilvusStats    `json:"milvus"`
-	SQLite    SQLiteStats    `json:"sqlite"`
-	Config    ConfigInfo     `json:"config"`
-	Timestamp time.Time      `json:"timestamp"`
+	Milvus    MilvusStats `json:"milvus"`
+	SQLite    SQLiteStats `json:"sqlite"`
+	Config    ConfigInfo  `json:"config"`
+	Timestamp time.Time   `json:"timestamp"`
 }
 
 // MilvusStats contains Milvus collection statistics
@@ -137,7 +195,7 @@ type SQLiteStats struct {
 
 // ConfigInfo contains configuration metadata
 type ConfigInfo struct {
-	Hash       string `json:"hash"`        // Config hash for change detection
+	Hash       string `json:"hash"` // Config hash for change detection
 	Collection string `json:"collection"`
 	Model      string `json:"model"`
 	Dimension  int    `json:"dimension"`

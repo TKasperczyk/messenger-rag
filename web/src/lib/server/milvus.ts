@@ -10,12 +10,14 @@ const embedModel = EMBED_MODEL || embeddingConfig.model;
 // Collection name from unified config
 const CHUNK_COLLECTION = milvusConfig.chunkCollection;
 
-// Search parameters from unified config (rag-config.ts mirrors rag.yaml)
+// Search parameters from rag.yaml (loaded at runtime via rag-config.ts)
 const SEARCH_METRIC_TYPE = milvusConfig.index.metric;
 const SEARCH_MIN_EF = milvusConfig.search.ef;
 const SEARCH_FETCH_MULTIPLIER = Math.max(1, milvusConfig.search.fetchMultiplier);
 
 let client: MilvusClient | null = null;
+
+const EMBEDDING_TIMEOUT_MS = 30_000;
 
 export async function getMilvusClient(): Promise<MilvusClient> {
 	if (!client) {
@@ -37,13 +39,13 @@ function safeJsonParseArray(value: unknown): unknown[] {
 	}
 }
 
-function safeJsonParseNumberArray(value: unknown): number[] {
+export function safeJsonParseNumberArray(value: unknown): number[] {
 	return safeJsonParseArray(value)
 		.map((v) => (typeof v === 'number' ? v : Number(v)))
 		.filter((n): n is number => Number.isFinite(n));
 }
 
-function safeJsonParseStringArray(value: unknown): string[] {
+export function safeJsonParseStringArray(value: unknown): string[] {
 	return safeJsonParseArray(value)
 		.map((v) => (v == null ? '' : String(v)))
 		.filter((s) => s.length > 0);
@@ -87,21 +89,34 @@ export interface ChunkSearchResultWithEmbedding extends ChunkSearchResult {
 }
 
 async function getEmbedding(text: string): Promise<number[]> {
-	const response = await fetch(`${lmstudioUrl}/embeddings`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			model: embedModel,
-			input: text
-		})
-	});
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), EMBEDDING_TIMEOUT_MS);
 
-	if (!response.ok) {
-		throw new Error(`Embedding API error: ${response.statusText}`);
+	try {
+		const response = await fetch(`${lmstudioUrl}/embeddings`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: embedModel,
+				input: text
+			}),
+			signal: controller.signal
+		});
+
+		if (!response.ok) {
+			throw new Error(`Embedding API error: ${response.statusText}`);
+		}
+
+		const data = await response.json();
+		return data.data[0].embedding;
+	} catch (err) {
+		if ((err as any)?.name === 'AbortError') {
+			throw new Error(`Embedding request timed out after ${Math.round(EMBEDDING_TIMEOUT_MS / 1000)}s`);
+		}
+		throw err;
+	} finally {
+		clearTimeout(timeoutId);
 	}
-
-	const data = await response.json();
-	return data.data[0].embedding;
 }
 
 /**
@@ -175,7 +190,8 @@ export async function getChunkCollectionStats() {
 	}
 }
 
-// Quality filter thresholds from unified config (rag-config.ts mirrors rag.yaml)
+// Quality filtering must stay in sync with meta-bridge/pkg/chunking/quality_filter.go.
+// Thresholds come from rag.yaml (loaded at runtime via rag-config.ts).
 const MIN_CHUNK_TEXT_LENGTH = qualityConfig.minChars;
 const MAX_CHUNK_TEXT_LENGTH = 3000;
 const MAX_URL_DENSITY = qualityConfig.filters.maxUrlDensity;
@@ -235,7 +251,7 @@ function isLowQualityChunkText(text: string): boolean {
 	if (urlChars > 0) {
 		const withoutUrls = withoutPrefixes.replace(URL_PATTERN, '').trim();
 		const nonUrlAlnum = countAlnumChars(withoutUrls);
-		if (nonUrlAlnum < URL_SPECIAL_CASE_MIN_ALNUM) return true;
+		if (qualityConfig.urlSpecialCase.enabled && nonUrlAlnum < URL_SPECIAL_CASE_MIN_ALNUM) return true;
 		// Skip "sent an attachment" messages (configurable)
 		if (qualityConfig.filters.skipAttachmentOnly && /sent an attachment/i.test(withoutUrls) && nonUrlAlnum < 100) {
 			return true;

@@ -2,7 +2,6 @@ package rag
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -27,6 +26,12 @@ func NewMilvusVectorSearcher(ctx context.Context, cfg *ragconfig.Config) (*Milvu
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Milvus: %w", err)
 	}
+	needsClose := true
+	defer func() {
+		if needsClose {
+			_ = c.Close()
+		}
+	}()
 
 	collection := cfg.Milvus.ChunkCollection
 
@@ -41,6 +46,7 @@ func NewMilvusVectorSearcher(ctx context.Context, cfg *ragconfig.Config) (*Milvu
 		}
 	}
 
+	needsClose = false
 	return &MilvusVectorSearcher{
 		client:     c,
 		collection: collection,
@@ -113,56 +119,98 @@ func (m *MilvusVectorSearcher) Search(ctx context.Context, embedding []float64, 
 			switch field.Name() {
 			case "chunk_id":
 				if col, ok := field.(*entity.ColumnVarChar); ok {
-					hit.ChunkID, _ = col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting chunk_id at idx %d: %w", i, err)
+					}
+					hit.ChunkID = val
 				}
 			case "thread_id":
 				if col, ok := field.(*entity.ColumnInt64); ok {
-					hit.ThreadID, _ = col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting thread_id at idx %d: %w", i, err)
+					}
+					hit.ThreadID = val
 				}
 			case "thread_name":
 				if col, ok := field.(*entity.ColumnVarChar); ok {
-					hit.ThreadName, _ = col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting thread_name at idx %d: %w", i, err)
+					}
+					hit.ThreadName = val
 				}
 			case "text":
 				if col, ok := field.(*entity.ColumnVarChar); ok {
-					hit.Text, _ = col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting text at idx %d: %w", i, err)
+					}
+					hit.Text = val
 				}
 			case "participant_ids":
 				if col, ok := field.(*entity.ColumnVarChar); ok {
-					jsonStr, _ := col.ValueByIdx(i)
-					hit.ParticipantIDs = parseJSONIntArray(jsonStr)
+					jsonStr, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting participant_ids at idx %d: %w", i, err)
+					}
+					hit.ParticipantIDs = parseIntArray(jsonStr)
 				}
 			case "participant_names":
 				if col, ok := field.(*entity.ColumnVarChar); ok {
-					jsonStr, _ := col.ValueByIdx(i)
-					hit.ParticipantNames = parseJSONStringArray(jsonStr)
+					jsonStr, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting participant_names at idx %d: %w", i, err)
+					}
+					hit.ParticipantNames = parseStringArray(jsonStr)
 				}
 			case "message_ids":
 				if col, ok := field.(*entity.ColumnVarChar); ok {
-					jsonStr, _ := col.ValueByIdx(i)
-					hit.MessageIDs = parseJSONStringArray(jsonStr)
+					jsonStr, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting message_ids at idx %d: %w", i, err)
+					}
+					hit.MessageIDs = parseStringArray(jsonStr)
 				}
 			case "start_timestamp_ms":
 				if col, ok := field.(*entity.ColumnInt64); ok {
-					hit.StartTimestampMs, _ = col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting start_timestamp_ms at idx %d: %w", i, err)
+					}
+					hit.StartTimestampMs = val
 				}
 			case "end_timestamp_ms":
 				if col, ok := field.(*entity.ColumnInt64); ok {
-					hit.EndTimestampMs, _ = col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting end_timestamp_ms at idx %d: %w", i, err)
+					}
+					hit.EndTimestampMs = val
 				}
 			case "message_count":
 				if col, ok := field.(*entity.ColumnInt16); ok {
-					val, _ := col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting message_count at idx %d: %w", i, err)
+					}
 					hit.MessageCount = int(val)
 				}
 			case "session_idx":
 				if col, ok := field.(*entity.ColumnInt16); ok {
-					val, _ := col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting session_idx at idx %d: %w", i, err)
+					}
 					hit.SessionIdx = int(val)
 				}
 			case "chunk_idx":
 				if col, ok := field.(*entity.ColumnInt16); ok {
-					val, _ := col.ValueByIdx(i)
+					val, err := col.ValueByIdx(i)
+					if err != nil {
+						return nil, fmt.Errorf("extracting chunk_idx at idx %d: %w", i, err)
+					}
 					hit.ChunkIdx = int(val)
 				}
 			}
@@ -213,43 +261,4 @@ func (m *MilvusVectorSearcher) Stats(ctx context.Context) (MilvusStats, error) {
 // Close closes the Milvus connection
 func (m *MilvusVectorSearcher) Close() error {
 	return m.client.Close()
-}
-
-// parseJSONIntArray parses a JSON array string to []int64
-func parseJSONIntArray(s string) []int64 {
-	if s == "" {
-		return nil
-	}
-	var arr []interface{}
-	if err := json.Unmarshal([]byte(s), &arr); err != nil {
-		return nil
-	}
-	result := make([]int64, 0, len(arr))
-	for _, v := range arr {
-		switch n := v.(type) {
-		case float64:
-			result = append(result, int64(n))
-		case int64:
-			result = append(result, n)
-		}
-	}
-	return result
-}
-
-// parseJSONStringArray parses a JSON array string to []string
-func parseJSONStringArray(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var arr []string
-	if err := json.Unmarshal([]byte(s), &arr); err != nil {
-		return nil
-	}
-	result := make([]string, 0, len(arr))
-	for _, str := range arr {
-		if str != "" {
-			result = append(result, str)
-		}
-	}
-	return result
 }

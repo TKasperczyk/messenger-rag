@@ -3,32 +3,20 @@
  * Uses Reciprocal Rank Fusion (RRF) for score combination
  */
 
-import { chunkSemanticSearch, type ChunkSearchResult } from './milvus';
+import {
+	chunkSemanticSearch,
+	safeJsonParseNumberArray,
+	safeJsonParseStringArray,
+	type ChunkSearchResult
+} from './milvus';
 import { ftsSearch, getChunkContext, type FtsSearchResult, type ChunkContext } from './sqlite';
 import { hybridConfig } from './rag-config';
 
-const DEFAULT_RRF_K = 60;
-
-function getRrfK(): number {
-	const k = hybridConfig.rrf.k;
-	return Number.isFinite(k) && k > 0 ? k : DEFAULT_RRF_K;
-}
-
-function getHybridWeights(): { vector: number; bm25: number } {
-	const vector = hybridConfig.weights.vector;
-	const bm25 = hybridConfig.weights.bm25;
-	const sum = vector + bm25;
-
-	if (!Number.isFinite(vector) || !Number.isFinite(bm25) || sum <= 0) {
-		return { vector: 0.5, bm25: 0.5 };
-	}
-
-	return { vector: vector / sum, bm25: bm25 / sum };
-}
-
 // RRF constant (typically 60)
-const RRF_K = getRrfK();
-const { vector: VECTOR_WEIGHT, bm25: BM25_WEIGHT } = getHybridWeights();
+const RRF_K = hybridConfig.rrf.k;
+const weightSum = hybridConfig.weights.vector + hybridConfig.weights.bm25;
+const VECTOR_WEIGHT = hybridConfig.weights.vector / weightSum;
+const BM25_WEIGHT = hybridConfig.weights.bm25 / weightSum;
 
 export interface HybridSearchResult extends ChunkSearchResult {
 	vector_rank: number | null;
@@ -61,12 +49,12 @@ function rrfScore(vectorRank: number | null, bm25Rank: number | null): number {
 function ftsToChunk(fts: FtsSearchResult): ChunkSearchResult {
 	return {
 		chunk_id: fts.chunk_id,
-		thread_id: String(fts.thread_id),
+		thread_id: fts.thread_id,
 		thread_name: fts.thread_name ?? '',
-		participant_ids: JSON.parse(fts.participant_ids || '[]'),
-		participant_names: JSON.parse(fts.participant_names || '[]'),
+		participant_ids: safeJsonParseNumberArray(fts.participant_ids),
+		participant_names: safeJsonParseStringArray(fts.participant_names),
 		text: fts.text,
-		message_ids: JSON.parse(fts.message_ids || '[]'),
+		message_ids: safeJsonParseStringArray(fts.message_ids),
 		start_timestamp_ms: fts.start_timestamp_ms,
 		end_timestamp_ms: fts.end_timestamp_ms,
 		message_count: fts.message_count,
@@ -175,7 +163,7 @@ export async function hybridSearchWithContext(
 	return results.map((result) => {
 		// Get context from SQLite
 		const context = getChunkContext(
-			Number(result.thread_id),
+			result.thread_id,
 			result.session_idx,
 			result.chunk_idx,
 			contextRadius

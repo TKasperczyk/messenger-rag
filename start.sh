@@ -51,7 +51,7 @@ EMBED_PID=$!
 
 # Wait for embedding server
 for i in {1..30}; do
-    if curl -s http://localhost:1235/v1/models > /dev/null 2>&1; then
+    if curl -s http://127.0.0.1:1235/v1/models > /dev/null 2>&1; then
         echo -e "${GREEN}OK${NC}"
         break
     fi
@@ -75,7 +75,7 @@ echo -n "Starting RAG server (port 8090)... "
 RAG_PID=$!
 
 for i in {1..10}; do
-    if curl -s http://localhost:8090/health > /dev/null 2>&1; then
+    if curl -s http://127.0.0.1:8090/health > /dev/null 2>&1; then
         echo -e "${GREEN}OK${NC}"
         break
     fi
@@ -95,7 +95,7 @@ WEB_PID=$!
 cd ..
 
 for i in {1..15}; do
-    if curl -s http://localhost:5173 > /dev/null 2>&1; then
+    if curl -s http://127.0.0.1:5173 > /dev/null 2>&1; then
         echo -e "${GREEN}OK${NC}"
         break
     fi
@@ -108,9 +108,9 @@ for i in {1..15}; do
 done
 
 echo -e "\n${GREEN}=== All services running ===${NC}"
-echo -e "  Embedding server: http://localhost:1235"
-echo -e "  RAG API:          http://localhost:8090"
-echo -e "  Web UI:           ${GREEN}http://localhost:5173${NC}"
+echo -e "  Embedding server: http://127.0.0.1:1235"
+echo -e "  RAG API:          http://127.0.0.1:8090"
+echo -e "  Web UI:           ${GREEN}http://127.0.0.1:5173${NC}"
 
 # Start background sync if enabled
 SYNC_PID=""

@@ -25,11 +25,11 @@ type Config struct {
 }
 
 type MilvusConfig struct {
-	Address                   string            `yaml:"address"`
-	ChunkCollection           string            `yaml:"chunk_collection"`
-	LegacyMessageCollection   string            `yaml:"legacy_message_collection"`
-	Index                     MilvusIndexConfig `yaml:"index"`
-	Search                    MilvusSearchConfig `yaml:"search"`
+	Address                 string             `yaml:"address"`
+	ChunkCollection         string             `yaml:"chunk_collection"`
+	LegacyMessageCollection string             `yaml:"legacy_message_collection"`
+	Index                   MilvusIndexConfig  `yaml:"index"`
+	Search                  MilvusSearchConfig `yaml:"search"`
 }
 
 type MilvusIndexConfig struct {
@@ -52,11 +52,11 @@ type EmbeddingConfig struct {
 }
 
 type ChunkingConfig struct {
-	Version  int                    `yaml:"version"`
-	Coalesce ChunkCoalesceConfig    `yaml:"coalesce"`
-	Session  ChunkSessionConfig     `yaml:"session"`
-	Size     ChunkSizeConfig        `yaml:"size"`
-	Format   ChunkFormatConfig      `yaml:"format"`
+	Version  int                 `yaml:"version"`
+	Coalesce ChunkCoalesceConfig `yaml:"coalesce"`
+	Session  ChunkSessionConfig  `yaml:"session"`
+	Size     ChunkSizeConfig     `yaml:"size"`
+	Format   ChunkFormatConfig   `yaml:"format"`
 }
 
 type ChunkCoalesceConfig struct {
@@ -80,11 +80,11 @@ type ChunkFormatConfig struct {
 }
 
 type QualityConfig struct {
-	MinChars        int                    `yaml:"min_chars"`
-	MinAlnumChars   int                    `yaml:"min_alnum_chars"`
-	MinUniqueWords  int                    `yaml:"min_unique_words"`
-	URLSpecialCase  URLSpecialCaseConfig   `yaml:"url_special_case"`
-	Filters         QualityFiltersConfig   `yaml:"filters"`
+	MinChars       int                  `yaml:"min_chars"`
+	MinAlnumChars  int                  `yaml:"min_alnum_chars"`
+	MinUniqueWords int                  `yaml:"min_unique_words"`
+	URLSpecialCase URLSpecialCaseConfig `yaml:"url_special_case"`
+	Filters        QualityFiltersConfig `yaml:"filters"`
 }
 
 type URLSpecialCaseConfig struct {
@@ -99,10 +99,10 @@ type QualityFiltersConfig struct {
 }
 
 type HybridConfig struct {
-	Enabled bool              `yaml:"enabled"`
-	RRF     RRFConfig         `yaml:"rrf"`
-	Weights HybridWeights     `yaml:"weights"`
-	BM25    BM25Config        `yaml:"bm25"`
+	Enabled bool          `yaml:"enabled"`
+	RRF     RRFConfig     `yaml:"rrf"`
+	Weights HybridWeights `yaml:"weights"`
+	BM25    BM25Config    `yaml:"bm25"`
 }
 
 type RRFConfig struct {
@@ -123,16 +123,16 @@ type DatabaseConfig struct {
 }
 
 type MetadataConfig struct {
-	Table string            `yaml:"table"`
+	Table string             `yaml:"table"`
 	Keys  MetadataKeysConfig `yaml:"keys"`
 }
 
 type MetadataKeysConfig struct {
-	EmbeddingModel   string `yaml:"embedding_model"`
-	EmbeddingDim     string `yaml:"embedding_dim"`
-	ChunkingVersion  string `yaml:"chunking_version"`
-	ConfigHash       string `yaml:"config_hash"`
-	IndexedAt        string `yaml:"indexed_at"`
+	EmbeddingModel  string `yaml:"embedding_model"`
+	EmbeddingDim    string `yaml:"embedding_dim"`
+	ChunkingVersion string `yaml:"chunking_version"`
+	ConfigHash      string `yaml:"config_hash"`
+	IndexedAt       string `yaml:"indexed_at"`
 }
 
 // Default returns the default configuration
@@ -154,10 +154,10 @@ func Default() *Config {
 			},
 		},
 		Embedding: EmbeddingConfig{
-			BaseURL:   "http://127.0.0.1:11434/v1",
-			Model:     "qwen3-embedding:8b",
-			Dimension: 4096,
-			BatchSize: 50,
+			BaseURL:   "http://127.0.0.1:1235/v1",
+			Model:     "mmlw-roberta-large",
+			Dimension: 1024,
+			BatchSize: 32,
 		},
 		Chunking: ChunkingConfig{
 			Version: 2,

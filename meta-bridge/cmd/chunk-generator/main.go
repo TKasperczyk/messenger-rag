@@ -46,7 +46,7 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	// Load configuration
-	cfg, err := loadConfig()
+	cfg, err := ragconfig.LoadFromFlagOrDir(*cfgPath, ".")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load configuration")
 	}
@@ -152,11 +152,4 @@ func main() {
 	if !*statsOnly {
 		fmt.Printf("Output written to: %s\n", *outputPath)
 	}
-}
-
-func loadConfig() (*ragconfig.Config, error) {
-	if *cfgPath != "" {
-		return ragconfig.Load(*cfgPath)
-	}
-	return ragconfig.LoadFromDir(".")
 }

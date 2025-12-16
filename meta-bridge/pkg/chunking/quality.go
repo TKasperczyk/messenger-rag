@@ -61,6 +61,9 @@ func HasURL(text string) bool {
 // ComputeIndexability determines if a chunk should be indexed (embedded).
 // Returns (isIndexable, charCount, alnumCount, uniqueWordCount)
 // charCount is in Unicode runes (not bytes) to match Python's len() behavior.
+//
+// Query-time filtering uses IsLowQualityChunkText (see quality_filter.go). Keep any
+// shared heuristics consistent with the web-side filtering in web/src/lib/server/milvus.ts.
 func ComputeIndexability(text string, cfg *ragconfig.Config) (bool, int, int, int) {
 	charCount := utf8.RuneCountInString(text) // Unicode chars, not bytes
 	alnumCount := CountAlnumChars(text)

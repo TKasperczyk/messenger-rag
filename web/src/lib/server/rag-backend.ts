@@ -7,7 +7,33 @@
 
 import { RAG_SERVER_URL } from '$env/static/private';
 
-const baseUrl = RAG_SERVER_URL || 'http://localhost:8090';
+const baseUrl = RAG_SERVER_URL || 'http://127.0.0.1:8090';
+const REQUEST_TIMEOUT_MS = 30_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+	// If the caller provided a signal, cascade aborts.
+	if (init?.signal) {
+		if (init.signal.aborted) {
+			controller.abort();
+		} else {
+			init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+		}
+	}
+
+	try {
+		return await fetch(url, { ...init, signal: controller.signal });
+	} catch (err) {
+		if ((err as any)?.name === 'AbortError') {
+			throw new Error(`Request timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+		}
+		throw err;
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
 
 export type SearchMode = 'vector' | 'bm25' | 'hybrid';
 
@@ -35,9 +61,9 @@ export interface ContextChunk {
 
 export interface SearchHit {
 	chunk_id: string;
-	thread_id: number;
+	thread_id: string;
 	thread_name: string;
-	participant_ids: number[];
+	participant_ids: string[];
 	participant_names: string[];
 	text: string;
 	message_ids: string[];
@@ -116,7 +142,7 @@ export async function search(req: SearchRequest): Promise<SearchResponse> {
 	if (req.w_vector) params.set('w_vector', String(req.w_vector));
 	if (req.w_bm25) params.set('w_bm25', String(req.w_bm25));
 
-	const response = await fetch(`${baseUrl}/search?${params.toString()}`);
+	const response = await fetchWithTimeout(`${baseUrl}/search?${params.toString()}`);
 
 	if (!response.ok) {
 		const error = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -130,7 +156,7 @@ export async function search(req: SearchRequest): Promise<SearchResponse> {
  * Get backend statistics
  */
 export async function stats(): Promise<StatsResponse> {
-	const response = await fetch(`${baseUrl}/stats`);
+	const response = await fetchWithTimeout(`${baseUrl}/stats`);
 
 	if (!response.ok) {
 		throw new Error(`Stats failed: ${response.status}`);
@@ -143,7 +169,7 @@ export async function stats(): Promise<StatsResponse> {
  * Check backend health
  */
 export async function health(): Promise<HealthResponse> {
-	const response = await fetch(`${baseUrl}/health`);
+	const response = await fetchWithTimeout(`${baseUrl}/health`);
 
 	if (!response.ok) {
 		throw new Error(`Health check failed: ${response.status}`);

@@ -6,6 +6,8 @@ import (
 	"math"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"go.mau.fi/mautrix-meta/pkg/ragconfig"
 )
 
@@ -40,6 +42,7 @@ type ChunkStore interface {
 // Embedder generates embeddings for text
 type Embedder interface {
 	Embed(ctx context.Context, text string) ([]float64, error)
+	IsAvailable(ctx context.Context) bool
 }
 
 // NewService creates a new RAG service with the given dependencies
@@ -83,7 +86,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (*SearchRespons
 		results, err = s.addContext(ctx, results, req.Context)
 		if err != nil {
 			// Log but don't fail - context is optional
-			// TODO: add logging
+			log.Warn().Err(err).Msg("context expansion failed")
 		}
 	}
 
@@ -450,11 +453,16 @@ func (s *Service) fuseRRF(vectorHits []VectorHit, bm25Hits []BM25Hit, req Search
 
 // addContext adds surrounding chunks to each hit
 func (s *Service) addContext(ctx context.Context, hits []Hit, radius int) ([]Hit, error) {
+	failures := 0
+	var lastErr error
+
 	for i := range hits {
 		hit := &hits[i]
 
 		contextChunks, err := s.chunks.GetContext(ctx, hit.ThreadID, hit.SessionIdx, hit.ChunkIdx, radius)
 		if err != nil {
+			failures++
+			lastErr = err
 			continue // Skip on error
 		}
 
@@ -468,6 +476,10 @@ func (s *Service) addContext(ctx context.Context, hits []Hit, radius int) ([]Hit
 				hit.ContextAfter = append(hit.ContextAfter, cc)
 			}
 		}
+	}
+
+	if failures > 0 && lastErr != nil {
+		return hits, fmt.Errorf("context expansion failed for %d/%d hits: %w", failures, len(hits), lastErr)
 	}
 
 	return hits, nil
@@ -514,8 +526,8 @@ func (s *Service) Health(ctx context.Context) *HealthResponse {
 		sqliteOK = true
 	}
 
-	// Check embedding (try a small embed)
-	if _, err := s.embed.Embed(ctx, "test"); err == nil {
+	// Check embedding service availability (lightweight /models probe via IsAvailable)
+	if s.embed != nil && s.embed.IsAvailable(ctx) {
 		embeddingOK = true
 	}
 
