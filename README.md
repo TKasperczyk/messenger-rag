@@ -3,7 +3,7 @@
 <!-- TODO: Add demo GIF showing semantic search in action -->
 ![Demo](docs/demo.gif)
 
-I have 500k+ Messenger messages going back over a decade. Facebook's built-in search is practically useless - it only matches exact keywords, doesn't understand Polish, and can't find anything unless you remember the exact words someone used.
+I have 500k+ Messenger messages going back over a decade. Facebook's built-in search is practically useless - it only matches exact keywords and can't find anything unless you remember the exact words someone used.
 
 So I built this. It's a local semantic search system that actually understands what you're looking for.
 
@@ -12,23 +12,23 @@ So I built this. It's a local semantic search system that actually understands w
 **Messenger search:**
 ```
 "camping trip" → 0 results
-"namiot" → 47 results, none relevant
+"tent" → 47 results, none relevant
 "that weekend in the mountains" → lol no
 ```
 
 **This tool:**
 ```
 "that time we went camping and it rained all night"
-  → finds the conversation about "biwak pod Babią Górą" where you complained about the wet sleeping bag
+  → finds the conversation where you complained about the wet sleeping bag
 
 "recipe someone sent me for that cake"
-  → finds a 3-year-old message with a sernik recipe from your aunt
+  → finds a 3-year-old message with a cheesecake recipe from your aunt
 
 "who recommended that sci-fi book"
-  → finds Kasia mentioning "Solaris" in a thread about movies
+  → finds your friend mentioning "Solaris" in a thread about movies
 ```
 
-It works because instead of matching keywords, it searches by *meaning*. The Polish embedding model understands that "pies" and "czworonożny przyjaciel" are related, even if you never used those exact words.
+It works because instead of matching keywords, it searches by *meaning*. The embedding model understands that "dog" and "furry friend" are related, that "angry" and "frustrated" are similar, even if you never used those exact words.
 
 ## What's inside
 
@@ -41,7 +41,7 @@ It works because instead of matching keywords, it searches by *meaning*. The Pol
 ## How it works
 
 ```
-You: "that argument about veganism"
+You: "that argument about diet"
                 ↓
         [Embedding Model]
         Converts to 1024-dim vector
@@ -55,8 +55,8 @@ You: "that argument about veganism"
         [Hybrid Ranking]
         Combines both, returns best matches
                 ↓
-Found: Conversation from 2024 where Wojtek roasted
-       Tomek about Beyond Meat for the 47th time
+Found: Conversation from 2024 about veganism
+       that you'd completely forgotten about
 ```
 
 ## Privacy & legal stuff
@@ -125,7 +125,7 @@ Everything is in `rag.yaml`. The defaults work fine, but you can tweak:
 
 ```yaml
 embedding:
-  model: mmlw-roberta-large  # Best Polish model, change for other languages
+  model: mmlw-roberta-large  # Default: Polish. See below for other languages
   dimension: 1024
 
 search:
@@ -136,6 +136,14 @@ quality:
   min_chars: 250             # Skip tiny chunks
   min_unique_words: 8        # Skip "haha ok" conversations
 ```
+
+**Embedding models for other languages:**
+- English: `sentence-transformers/all-mpnet-base-v2` (768 dim)
+- Multilingual: `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` (768 dim)
+- German: `deutsche-telekom/gbert-large-paraphrase-cosine` (1024 dim)
+- Chinese: `shibing624/text2vec-base-chinese` (768 dim)
+
+Just change `model` and `dimension` in `rag.yaml` and reindex.
 
 ## Advanced usage
 
@@ -159,7 +167,7 @@ Only new/changed chunks get re-embedded. A 500k message database takes ~10 minut
 |------|-----|
 | [mautrix-meta](https://github.com/mautrix/meta) | Facebook protocol (WebSocket, E2EE) |
 | [Milvus](https://milvus.io/) | Vector similarity search |
-| [sdadas/mmlw-roberta-large](https://huggingface.co/sdadas/mmlw-roberta-large) | Polish embedding model (swap for your language) |
+| [sentence-transformers](https://www.sbert.net/) | Embedding models (swap for your language) |
 | SQLite + FTS5 | Storage + keyword search |
 | SvelteKit | Web UI |
 | Go | Everything else |
