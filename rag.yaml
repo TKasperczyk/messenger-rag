@@ -33,18 +33,17 @@ milvus:
 # =============================================================================
 embedding:
   # API endpoint (OpenAI-compatible)
-  # For local: LMStudio or Ollama with OpenAI compatibility
-  # For RunPod: Ollama on GPU
-  base_url: "http://127.0.0.1:1234/v1"  # LMStudio
+  # Python FastAPI server running sdadas/mmlw-roberta-large (best Polish model)
+  base_url: "http://127.0.0.1:1235/v1"
 
   # Model configuration
-  # Using nomic-embed-text-v1.5 for better Polish language separation
-  # (previously qwen3-embedding-8b but Q4 quantization degraded quality)
-  model: "text-embedding-nomic-embed-text-v1.5"
-  dimension: 768
+  # Using sdadas/mmlw-roberta-large - top Polish embedding model on PL-MTEB
+  # Properly understands Polish semantics (kot/przyjaciel → kot jest przyjacielem)
+  model: "mmlw-roberta-large"
+  dimension: 1024
 
   # Batch settings for indexing
-  batch_size: 50
+  batch_size: 32
 
 # =============================================================================
 # Chunking Configuration

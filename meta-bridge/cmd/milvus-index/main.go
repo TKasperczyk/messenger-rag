@@ -34,6 +34,7 @@ var (
 	dbPath    = flag.String("db", "", "Path to SQLite database (defaults to database.sqlite from config)")
 	cfgPath   = flag.String("config", "", "Path to rag.yaml (auto-detected if not specified)")
 	dropFirst = flag.Bool("drop", false, "Drop existing collection before creating")
+	cleanup   = flag.Bool("cleanup", false, "Delete stale chunks from Milvus (non-indexable or deleted from SQLite)")
 	batchSize = flag.Int("batch-size", 50, "Number of chunks to embed and insert per batch")
 	debug     = flag.Bool("debug", false, "Enable debug logging")
 )
@@ -74,8 +75,8 @@ func main() {
 
 	ctx := context.Background()
 
-	// Open SQLite database
-	db, err := sql.Open("sqlite3", sqlitePath+"?mode=ro")
+	// Open SQLite database (read-write for updating milvus_synced flag, with WAL and busy timeout)
+	db, err := sql.Open("sqlite3", sqlitePath+"?_busy_timeout=30000&_journal_mode=WAL")
 	if err != nil {
 		log.Fatal().Err(err).Str("path", sqlitePath).Msg("Failed to open database")
 	}
@@ -95,25 +96,22 @@ func main() {
 	defer milvusClient.Close()
 	fmt.Printf("Connected to Milvus at %s\n", cfg.Milvus.Address)
 
-	// Create embedding client
+	// Create embedding client (availability checked later, only if needed)
 	embClient := vectordb.NewEmbeddingClient(vectordb.EmbeddingConfig{
 		BaseURL:   cfg.Embedding.BaseURL,
 		Model:     cfg.Embedding.Model,
 		Dimension: cfg.Embedding.Dimension,
 	})
 
-	// Check embedding service
-	if !embClient.IsAvailable(ctx) {
-		log.Fatal().Msg("Embedding service not available at " + cfg.Embedding.BaseURL)
-	}
-	fmt.Printf("Embedding service available at %s\n", cfg.Embedding.BaseURL)
-
 	// Handle collection creation
 	collection := cfg.Milvus.ChunkCollection
+	needsFullReindex := false
+
 	if *dropFirst {
 		if err := dropCollection(ctx, milvusClient, collection); err != nil {
 			log.Fatal().Err(err).Msg("Failed to drop collection")
 		}
+		needsFullReindex = true
 	}
 
 	exists, err := milvusClient.HasCollection(ctx, collection)
@@ -125,6 +123,7 @@ func main() {
 		if err := createCollection(ctx, milvusClient, cfg); err != nil {
 			log.Fatal().Err(err).Msg("Failed to create collection")
 		}
+		needsFullReindex = true
 	} else {
 		fmt.Printf("Collection %s already exists, using existing\n", collection)
 		// Load collection for insertion
@@ -133,24 +132,47 @@ func main() {
 		}
 	}
 
-	// Count indexable chunks
-	var totalChunks int
-	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chunks WHERE is_indexable = 1").Scan(&totalChunks)
+	// Reset milvus_synced if collection was dropped or newly created
+	// Reset ALL chunks (not just indexable) so that if is_indexable changes later, they get re-evaluated
+	if needsFullReindex {
+		fmt.Println("Resetting sync status for full reindex...")
+		_, err := db.ExecContext(ctx, "UPDATE chunks SET milvus_synced = 0")
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to reset sync status")
+		}
+	}
+
+	// Count unsynced indexable chunks
+	var unsyncedChunks int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chunks WHERE is_indexable = 1 AND (milvus_synced = 0 OR milvus_synced IS NULL)").Scan(&unsyncedChunks)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to count chunks")
 	}
-	fmt.Printf("Total indexable chunks: %d\n\n", totalChunks)
 
-	if totalChunks == 0 {
-		fmt.Println("No indexable chunks found. Run fts5-setup first.")
-		return
+	var totalChunks int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM chunks WHERE is_indexable = 1").Scan(&totalChunks)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to count total chunks")
 	}
 
-	// Process chunks in batches
+	fmt.Printf("Unsynced chunks: %d (of %d total indexable)\n\n", unsyncedChunks, totalChunks)
+
+	// Process chunks in batches (skip if nothing to do)
 	start := time.Now()
-	inserted, err := indexChunks(ctx, db, milvusClient, embClient, cfg, *batchSize, totalChunks)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to index chunks")
+	inserted := 0
+	if unsyncedChunks > 0 {
+		// Check embedding service only when we have chunks to embed
+		if !embClient.IsAvailable(ctx) {
+			log.Fatal().Msg("Embedding service not available at " + cfg.Embedding.BaseURL)
+		}
+		fmt.Printf("Embedding service available at %s\n", cfg.Embedding.BaseURL)
+
+		inserted, err = indexChunks(ctx, db, milvusClient, embClient, cfg, *batchSize, unsyncedChunks)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to index chunks")
+		}
+	} else {
+		fmt.Println("All chunks already synced to Milvus.")
 	}
 
 	// Flush
@@ -175,6 +197,16 @@ func main() {
 	fmt.Printf("Total inserted: %d\n", inserted)
 	fmt.Printf("Final collection size: %d\n", finalCount)
 	fmt.Printf("Duration: %s\n", time.Since(start).Round(time.Second))
+
+	// Cleanup stale chunks if requested
+	if *cleanup {
+		deleted, err := cleanupStaleChunks(ctx, db, milvusClient, collection)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to cleanup stale chunks")
+		} else if deleted > 0 {
+			fmt.Printf("\nCleaned up %d stale chunks from Milvus\n", deleted)
+		}
+	}
 }
 
 func loadConfig() (*ragconfig.Config, error) {
@@ -325,18 +357,21 @@ type chunkRow struct {
 	StartTimestampMs int64
 	EndTimestampMs   int64
 	MessageCount     int
+	ContentHash      string // Used for race-condition-safe UPDATE
 }
 
 func indexChunks(ctx context.Context, db *sql.DB, milvus client.Client, embClient *vectordb.EmbeddingClient, cfg *ragconfig.Config, batchSize, total int) (int, error) {
 	collection := cfg.Milvus.ChunkCollection
 
+	// Only select unsynced chunks, include content_hash for race-safe UPDATE
 	rows, err := db.QueryContext(ctx, `
 		SELECT
 			chunk_id, thread_id, thread_name, session_idx, chunk_idx,
 			participant_ids, participant_names, text, message_ids,
-			start_timestamp_ms, end_timestamp_ms, message_count
+			start_timestamp_ms, end_timestamp_ms, message_count,
+			COALESCE(content_hash, '') as content_hash
 		FROM chunks
-		WHERE is_indexable = 1
+		WHERE is_indexable = 1 AND (milvus_synced = 0 OR milvus_synced IS NULL)
 		ORDER BY thread_id, session_idx, chunk_idx
 	`)
 	if err != nil {
@@ -365,6 +400,7 @@ func indexChunks(ctx context.Context, db *sql.DB, milvus client.Client, embClien
 			&chunk.StartTimestampMs,
 			&chunk.EndTimestampMs,
 			&chunk.MessageCount,
+			&chunk.ContentHash,
 		); err != nil {
 			return inserted, fmt.Errorf("scanning chunk: %w", err)
 		}
@@ -376,8 +412,17 @@ func indexChunks(ctx context.Context, db *sql.DB, milvus client.Client, embClien
 			if err != nil {
 				return inserted, fmt.Errorf("inserting batch %d: %w", batchNum, err)
 			}
+
+			// Mark batch as synced with content_hash guard (prevents race condition)
+			if err := markBatchSynced(ctx, db, batch); err != nil {
+				log.Warn().Err(err).Msg("Failed to mark batch as synced")
+			}
+
 			inserted += n
 			batchNum++
+
+			// Small delay between batches
+			time.Sleep(50 * time.Millisecond)
 
 			if batchNum%10 == 0 {
 				pct := float64(inserted) / float64(total) * 100
@@ -398,10 +443,49 @@ func indexChunks(ctx context.Context, db *sql.DB, milvus client.Client, embClien
 		if err != nil {
 			return inserted, fmt.Errorf("inserting final batch: %w", err)
 		}
+
+		// Mark final batch as synced
+		if err := markBatchSynced(ctx, db, batch); err != nil {
+			log.Warn().Err(err).Msg("Failed to mark final batch as synced")
+		}
+
 		inserted += n
 	}
 
 	return inserted, nil
+}
+
+// markBatchSynced marks chunks as synced only if their content_hash hasn't changed
+// This prevents race conditions where fts5-setup updates content while we're indexing
+func markBatchSynced(ctx context.Context, db *sql.DB, batch []chunkRow) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	// Build batched UPDATE with content_hash guard
+	// Only mark as synced if content_hash matches what we indexed
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		UPDATE chunks SET milvus_synced = 1
+		WHERE chunk_id = ? AND (content_hash = ? OR (content_hash IS NULL AND ? = ''))
+	`)
+	if err != nil {
+		return fmt.Errorf("preparing statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, c := range batch {
+		if _, err := stmt.ExecContext(ctx, c.ChunkID, c.ContentHash, c.ContentHash); err != nil {
+			log.Warn().Err(err).Str("chunk_id", c.ChunkID).Msg("Failed to mark chunk as synced")
+		}
+	}
+
+	return tx.Commit()
 }
 
 func insertBatch(ctx context.Context, milvus client.Client, embClient *vectordb.EmbeddingClient, collection string, chunks []chunkRow, dim int) (int, error) {
@@ -409,15 +493,28 @@ func insertBatch(ctx context.Context, milvus client.Client, embClient *vectordb.
 		return 0, nil
 	}
 
-	// Collect texts for embedding
+	// Log chunk IDs for debugging crashes (only build slice when debug enabled)
+	if log.Debug().Enabled() {
+		chunkIDsForLog := make([]string, len(chunks))
+		for i, c := range chunks {
+			chunkIDsForLog[i] = c.ChunkID
+		}
+		log.Debug().Strs("chunk_ids", chunkIDsForLog).Msg("Processing batch")
+	}
+
+	// Generate embeddings in batch for better GPU utilization
 	texts := make([]string, len(chunks))
 	for i, c := range chunks {
 		texts[i] = c.Text
 	}
-
-	// Generate embeddings
 	embeddings, err := embClient.EmbedBatch(ctx, texts)
 	if err != nil {
+		// Log the failing batch for debugging
+		failedIDs := make([]string, len(chunks))
+		for i, c := range chunks {
+			failedIDs[i] = c.ChunkID
+		}
+		log.Error().Strs("chunk_ids", failedIDs).Err(err).Msg("Batch failed - these chunks caused crash")
 		return 0, fmt.Errorf("generating embeddings: %w", err)
 	}
 
@@ -482,7 +579,18 @@ func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
+	// UTF-8 safe truncation: don't cut in the middle of a multi-byte character
+	// Walk backwards from maxLen to find a valid UTF-8 boundary
+	for maxLen > 0 && !isUTF8Start(s[maxLen]) {
+		maxLen--
+	}
 	return s[:maxLen]
+}
+
+// isUTF8Start returns true if byte is a valid UTF-8 start byte (not a continuation)
+func isUTF8Start(b byte) bool {
+	// UTF-8 continuation bytes are 10xxxxxx (0x80-0xBF)
+	return (b & 0xC0) != 0x80
 }
 
 func truncateJSON(s string, maxLen int) string {
@@ -505,4 +613,101 @@ func truncateJSON(s string, maxLen int) string {
 	}
 
 	return "[]"
+}
+
+// cleanupStaleChunks removes chunks from Milvus that are no longer valid in SQLite
+// (either deleted or marked as non-indexable)
+// Note: For very large collections (>100k chunks), this may not catch all stale entries
+// due to Milvus query limits. Use --drop for complete rebuild in such cases.
+func cleanupStaleChunks(ctx context.Context, db *sql.DB, milvus client.Client, collection string) (int, error) {
+	fmt.Println("\nChecking for stale chunks in Milvus...")
+
+	// Get all valid indexable chunk_ids from SQLite
+	validIDs := make(map[string]struct{})
+	rows, err := db.QueryContext(ctx, "SELECT chunk_id FROM chunks WHERE is_indexable = 1")
+	if err != nil {
+		return 0, fmt.Errorf("querying valid chunks: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return 0, fmt.Errorf("scanning chunk_id: %w", err)
+		}
+		validIDs[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterating rows: %w", err)
+	}
+
+	fmt.Printf("  Valid indexable chunks in SQLite: %d\n", len(validIDs))
+
+	// Query chunk_ids from Milvus in batches using hex prefix ranges
+	// This works around Milvus's default result limits
+	var staleIDs []string
+	milvusTotal := 0
+	hexPrefixes := []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"}
+
+	for _, prefix := range hexPrefixes {
+		// Query chunks with this hex prefix (chunk_ids are hex hashes)
+		expr := fmt.Sprintf("chunk_id like \"%s%%\"", prefix)
+		results, err := milvus.Query(ctx, collection, []string{}, expr, []string{"chunk_id"})
+		if err != nil {
+			log.Warn().Err(err).Str("prefix", prefix).Msg("Failed to query Milvus partition")
+			continue
+		}
+
+		// Extract chunk_ids from results and find stale ones
+		for _, col := range results {
+			if col.Name() == "chunk_id" {
+				if strCol, ok := col.(*entity.ColumnVarChar); ok {
+					for i := 0; i < strCol.Len(); i++ {
+						val, err := strCol.ValueByIdx(i)
+						if err != nil {
+							continue
+						}
+						milvusTotal++
+						if _, valid := validIDs[val]; !valid {
+							staleIDs = append(staleIDs, val)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Printf("  Chunks scanned in Milvus: %d\n", milvusTotal)
+
+	if len(staleIDs) == 0 {
+		fmt.Println("  No stale chunks found")
+		return 0, nil
+	}
+
+	fmt.Printf("  Found %d stale chunks, deleting...\n", len(staleIDs))
+
+	// Delete stale chunks in batches
+	deleteBatchSize := 1000
+	deleted := 0
+
+	for i := 0; i < len(staleIDs); i += deleteBatchSize {
+		end := i + deleteBatchSize
+		if end > len(staleIDs) {
+			end = len(staleIDs)
+		}
+		batch := staleIDs[i:end]
+
+		// Build expression for deletion
+		expr := fmt.Sprintf("chunk_id in [\"%s\"]", strings.Join(batch, "\",\""))
+		if err := milvus.Delete(ctx, collection, "", expr); err != nil {
+			log.Warn().Err(err).Int("batch_start", i).Msg("Failed to delete batch")
+			continue
+		}
+		deleted += len(batch)
+	}
+
+	// Also reset milvus_synced for non-indexable chunks in SQLite (for consistency)
+	_, _ = db.ExecContext(ctx, "UPDATE chunks SET milvus_synced = 0 WHERE is_indexable = 0 AND milvus_synced = 1")
+
+	return deleted, nil
 }

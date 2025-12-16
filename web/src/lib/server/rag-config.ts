@@ -79,10 +79,10 @@ export const ragConfig: RagConfig = {
 		}
 	},
 	embedding: {
-		baseUrl: 'http://127.0.0.1:11434/v1',
-		model: 'qwen3-embedding:8b',
-		dimension: 4096,
-		batchSize: 50
+		baseUrl: 'http://127.0.0.1:1235/v1',
+		model: 'mmlw-roberta-large',
+		dimension: 1024,
+		batchSize: 32
 	},
 	quality: {
 		minChars: 250,

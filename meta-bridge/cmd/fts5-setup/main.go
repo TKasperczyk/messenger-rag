@@ -12,7 +12,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -77,8 +79,8 @@ func main() {
 	fmt.Printf("FTS table name: %s\n", ftsTable)
 	fmt.Println()
 
-	// Open database (read-write mode)
-	db, err := sql.Open("sqlite3", sqlitePath)
+	// Open database (read-write mode with WAL and busy timeout for concurrent access)
+	db, err := sql.Open("sqlite3", sqlitePath+"?_busy_timeout=30000&_journal_mode=WAL")
 	if err != nil {
 		log.Fatal().Err(err).Str("path", sqlitePath).Msg("Failed to open database")
 	}
@@ -133,106 +135,165 @@ func loadConfig() (*ragconfig.Config, error) {
 }
 
 func createTables(ctx context.Context, db *sql.DB, ftsTable string) error {
-	// Drop existing tables if they exist
-	queries := []string{
-		fmt.Sprintf("DROP TABLE IF EXISTS %s", ftsTable),
-		"DROP TRIGGER IF EXISTS chunks_ai",
-		"DROP TRIGGER IF EXISTS chunks_ad",
-		"DROP TRIGGER IF EXISTS chunks_au",
-		"DROP TABLE IF EXISTS chunks",
+	// Check if chunks table exists
+	var tableExists int
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chunks'").Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("checking table existence: %w", err)
 	}
 
-	for _, q := range queries {
-		if _, err := db.ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("executing %q: %w", q, err)
+	if tableExists == 0 {
+		// Create chunks table with new schema (includes content_hash and milvus_synced)
+		_, err := db.ExecContext(ctx, `
+			CREATE TABLE chunks (
+				chunk_id TEXT PRIMARY KEY,
+				thread_id INTEGER NOT NULL,
+				thread_name TEXT,
+				session_idx INTEGER NOT NULL,
+				chunk_idx INTEGER NOT NULL,
+				message_ids TEXT NOT NULL,
+				participant_ids TEXT NOT NULL,
+				participant_names TEXT NOT NULL,
+				text TEXT NOT NULL,
+				start_timestamp_ms INTEGER NOT NULL,
+				end_timestamp_ms INTEGER NOT NULL,
+				message_count INTEGER NOT NULL,
+				is_indexable INTEGER NOT NULL,
+				char_count INTEGER NOT NULL,
+				alnum_count INTEGER NOT NULL,
+				unique_word_count INTEGER NOT NULL,
+				content_hash TEXT,
+				milvus_synced INTEGER DEFAULT 0
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("creating chunks table: %w", err)
 		}
-	}
 
-	// Create chunks table
-	_, err := db.ExecContext(ctx, `
-		CREATE TABLE chunks (
-			chunk_id TEXT PRIMARY KEY,
-			thread_id INTEGER NOT NULL,
-			thread_name TEXT,
-			session_idx INTEGER NOT NULL,
-			chunk_idx INTEGER NOT NULL,
-			message_ids TEXT NOT NULL,
-			participant_ids TEXT NOT NULL,
-			participant_names TEXT NOT NULL,
-			text TEXT NOT NULL,
-			start_timestamp_ms INTEGER NOT NULL,
-			end_timestamp_ms INTEGER NOT NULL,
-			message_count INTEGER NOT NULL,
-			is_indexable INTEGER NOT NULL,
-			char_count INTEGER NOT NULL,
-			alnum_count INTEGER NOT NULL,
-			unique_word_count INTEGER NOT NULL
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("creating chunks table: %w", err)
-	}
-
-	// Create FTS5 virtual table
-	_, err = db.ExecContext(ctx, fmt.Sprintf(`
-		CREATE VIRTUAL TABLE %s USING fts5(
-			chunk_id UNINDEXED,
-			text,
-			content='chunks',
-			content_rowid='rowid'
-		)
-	`, ftsTable))
-	if err != nil {
-		return fmt.Errorf("creating FTS5 table: %w", err)
-	}
-
-	// Create triggers to keep FTS in sync
-	_, err = db.ExecContext(ctx, fmt.Sprintf(`
-		CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
-			INSERT INTO %s(rowid, chunk_id, text)
-			VALUES (new.rowid, new.chunk_id, new.text);
-		END
-	`, ftsTable))
-	if err != nil {
-		return fmt.Errorf("creating insert trigger: %w", err)
-	}
-
-	_, err = db.ExecContext(ctx, fmt.Sprintf(`
-		CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
-			INSERT INTO %s(%s, rowid, chunk_id, text)
-			VALUES('delete', old.rowid, old.chunk_id, old.text);
-		END
-	`, ftsTable, ftsTable))
-	if err != nil {
-		return fmt.Errorf("creating delete trigger: %w", err)
-	}
-
-	_, err = db.ExecContext(ctx, fmt.Sprintf(`
-		CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN
-			INSERT INTO %s(%s, rowid, chunk_id, text)
-			VALUES('delete', old.rowid, old.chunk_id, old.text);
-			INSERT INTO %s(rowid, chunk_id, text)
-			VALUES (new.rowid, new.chunk_id, new.text);
-		END
-	`, ftsTable, ftsTable, ftsTable))
-	if err != nil {
-		return fmt.Errorf("creating update trigger: %w", err)
-	}
-
-	// Create indexes
-	indexes := []string{
-		"CREATE INDEX idx_chunks_thread_session ON chunks(thread_id, session_idx, chunk_idx)",
-		"CREATE INDEX idx_chunks_indexable ON chunks(is_indexable)",
-		"CREATE INDEX idx_chunks_timestamp ON chunks(start_timestamp_ms)",
-	}
-	for _, idx := range indexes {
-		if _, err := db.ExecContext(ctx, idx); err != nil {
-			return fmt.Errorf("creating index: %w", err)
+		// Create FTS5 virtual table
+		_, err = db.ExecContext(ctx, fmt.Sprintf(`
+			CREATE VIRTUAL TABLE %s USING fts5(
+				chunk_id UNINDEXED,
+				text,
+				content='chunks',
+				content_rowid='rowid'
+			)
+		`, ftsTable))
+		if err != nil {
+			return fmt.Errorf("creating FTS5 table: %w", err)
 		}
+
+		// Create triggers to keep FTS in sync
+		_, err = db.ExecContext(ctx, fmt.Sprintf(`
+			CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+				INSERT INTO %s(rowid, chunk_id, text)
+				VALUES (new.rowid, new.chunk_id, new.text);
+			END
+		`, ftsTable))
+		if err != nil {
+			return fmt.Errorf("creating insert trigger: %w", err)
+		}
+
+		_, err = db.ExecContext(ctx, fmt.Sprintf(`
+			CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+				INSERT INTO %s(%s, rowid, chunk_id, text)
+				VALUES('delete', old.rowid, old.chunk_id, old.text);
+			END
+		`, ftsTable, ftsTable))
+		if err != nil {
+			return fmt.Errorf("creating delete trigger: %w", err)
+		}
+
+		_, err = db.ExecContext(ctx, fmt.Sprintf(`
+			CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN
+				INSERT INTO %s(%s, rowid, chunk_id, text)
+				VALUES('delete', old.rowid, old.chunk_id, old.text);
+				INSERT INTO %s(rowid, chunk_id, text)
+				VALUES (new.rowid, new.chunk_id, new.text);
+			END
+		`, ftsTable, ftsTable, ftsTable))
+		if err != nil {
+			return fmt.Errorf("creating update trigger: %w", err)
+		}
+
+		// Create indexes
+		indexes := []string{
+			"CREATE INDEX idx_chunks_thread_session ON chunks(thread_id, session_idx, chunk_idx)",
+			"CREATE INDEX idx_chunks_indexable ON chunks(is_indexable)",
+			"CREATE INDEX idx_chunks_timestamp ON chunks(start_timestamp_ms)",
+			"CREATE INDEX idx_chunks_milvus_synced ON chunks(milvus_synced)",
+		}
+		for _, idx := range indexes {
+			if _, err := db.ExecContext(ctx, idx); err != nil {
+				return fmt.Errorf("creating index: %w", err)
+			}
+		}
+
+		fmt.Printf("Created chunks and %s tables\n", ftsTable)
+	} else {
+		// Table exists - check if we need to add new columns
+		var hasContentHash, hasMilvusSynced int
+		err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name='content_hash'").Scan(&hasContentHash)
+		if err != nil {
+			return fmt.Errorf("checking content_hash column: %w", err)
+		}
+		err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name='milvus_synced'").Scan(&hasMilvusSynced)
+		if err != nil {
+			return fmt.Errorf("checking milvus_synced column: %w", err)
+		}
+
+		if hasContentHash == 0 || hasMilvusSynced == 0 {
+			fmt.Println("Migrating chunks table...")
+			if hasContentHash == 0 {
+				fmt.Println("  Adding content_hash column...")
+				_, err = db.ExecContext(ctx, "ALTER TABLE chunks ADD COLUMN content_hash TEXT")
+				if err != nil {
+					return fmt.Errorf("adding content_hash column: %w", err)
+				}
+			}
+			if hasMilvusSynced == 0 {
+				fmt.Println("  Adding milvus_synced column...")
+				_, err = db.ExecContext(ctx, "ALTER TABLE chunks ADD COLUMN milvus_synced INTEGER DEFAULT 0")
+				if err != nil {
+					return fmt.Errorf("adding milvus_synced column: %w", err)
+				}
+			}
+			fmt.Println("Migration complete")
+		}
+
+		// Always ensure index exists
+		_, err = db.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_chunks_milvus_synced ON chunks(milvus_synced)")
+		if err != nil {
+			return fmt.Errorf("creating milvus_synced index: %w", err)
+		}
+
+		fmt.Printf("Using existing chunks table (incremental mode)\n")
 	}
 
-	fmt.Printf("Created chunks and %s tables\n", ftsTable)
 	return nil
+}
+
+// computeContentHash generates a hash of all Milvus-stored fields for change detection
+// Includes all fields that get stored in Milvus to detect any staleness
+// Also includes is_indexable so that indexability changes trigger re-sync
+func computeContentHash(text, messageIDs, threadName, participantIDs, participantNames string, isIndexable bool) string {
+	h := sha256.New()
+	h.Write([]byte(text))
+	h.Write([]byte{0}) // separator
+	h.Write([]byte(messageIDs))
+	h.Write([]byte{0})
+	h.Write([]byte(threadName))
+	h.Write([]byte{0})
+	h.Write([]byte(participantIDs))
+	h.Write([]byte{0})
+	h.Write([]byte(participantNames))
+	h.Write([]byte{0})
+	if isIndexable {
+		h.Write([]byte("1"))
+	} else {
+		h.Write([]byte("0"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16] // First 16 chars is enough
 }
 
 func loadChunksFromJSONL(ctx context.Context, db *sql.DB, jsonlPath string) (int, int, error) {
@@ -250,13 +311,37 @@ func loadChunksFromJSONL(ctx context.Context, db *sql.DB, jsonlPath string) (int
 	}
 	defer tx.Rollback()
 
+	// Use INSERT OR REPLACE with content_hash tracking
+	// When content_hash changes (or was NULL), milvus_synced is reset to 0
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO chunks (
 			chunk_id, thread_id, thread_name, session_idx, chunk_idx,
 			message_ids, participant_ids, participant_names, text,
 			start_timestamp_ms, end_timestamp_ms, message_count,
-			is_indexable, char_count, alnum_count, unique_word_count
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			is_indexable, char_count, alnum_count, unique_word_count,
+			content_hash, milvus_synced
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+		ON CONFLICT(chunk_id) DO UPDATE SET
+			thread_id = excluded.thread_id,
+			thread_name = excluded.thread_name,
+			session_idx = excluded.session_idx,
+			chunk_idx = excluded.chunk_idx,
+			message_ids = excluded.message_ids,
+			participant_ids = excluded.participant_ids,
+			participant_names = excluded.participant_names,
+			text = excluded.text,
+			start_timestamp_ms = excluded.start_timestamp_ms,
+			end_timestamp_ms = excluded.end_timestamp_ms,
+			message_count = excluded.message_count,
+			is_indexable = excluded.is_indexable,
+			char_count = excluded.char_count,
+			alnum_count = excluded.alnum_count,
+			unique_word_count = excluded.unique_word_count,
+			content_hash = excluded.content_hash,
+			milvus_synced = CASE
+				WHEN chunks.content_hash IS NULL OR chunks.content_hash IS NOT excluded.content_hash THEN 0
+				ELSE chunks.milvus_synced
+			END
 	`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("preparing statement: %w", err)
@@ -286,6 +371,8 @@ func loadChunksFromJSONL(ctx context.Context, db *sql.DB, jsonlPath string) (int
 			indexable++
 		}
 
+		contentHash := computeContentHash(chunk.Text, string(messageIDsJSON), chunk.ThreadName, string(participantIDsJSON), string(participantNamesJSON), chunk.IsIndexable)
+
 		_, err := stmt.ExecContext(ctx,
 			chunk.ChunkID,
 			chunk.ThreadID,
@@ -303,6 +390,7 @@ func loadChunksFromJSONL(ctx context.Context, db *sql.DB, jsonlPath string) (int
 			chunk.CharCount,
 			chunk.AlnumCount,
 			chunk.UniqueWordCount,
+			contentHash,
 		)
 		if err != nil {
 			return total, indexable, fmt.Errorf("inserting chunk %s: %w", chunk.ChunkID, err)
@@ -310,7 +398,7 @@ func loadChunksFromJSONL(ctx context.Context, db *sql.DB, jsonlPath string) (int
 
 		total++
 		if total%batchSize == 0 {
-			fmt.Printf("  Inserted %d chunks...\n", total)
+			fmt.Printf("  Processed %d chunks...\n", total)
 		}
 	}
 
@@ -335,13 +423,37 @@ func loadChunksFromDB(ctx context.Context, db *sql.DB, cfg *ragconfig.Config) (i
 	}
 	defer tx.Rollback()
 
+	// Use INSERT OR REPLACE with content_hash tracking
+	// When content_hash changes (or was NULL), milvus_synced is reset to 0
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO chunks (
 			chunk_id, thread_id, thread_name, session_idx, chunk_idx,
 			message_ids, participant_ids, participant_names, text,
 			start_timestamp_ms, end_timestamp_ms, message_count,
-			is_indexable, char_count, alnum_count, unique_word_count
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			is_indexable, char_count, alnum_count, unique_word_count,
+			content_hash, milvus_synced
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+		ON CONFLICT(chunk_id) DO UPDATE SET
+			thread_id = excluded.thread_id,
+			thread_name = excluded.thread_name,
+			session_idx = excluded.session_idx,
+			chunk_idx = excluded.chunk_idx,
+			message_ids = excluded.message_ids,
+			participant_ids = excluded.participant_ids,
+			participant_names = excluded.participant_names,
+			text = excluded.text,
+			start_timestamp_ms = excluded.start_timestamp_ms,
+			end_timestamp_ms = excluded.end_timestamp_ms,
+			message_count = excluded.message_count,
+			is_indexable = excluded.is_indexable,
+			char_count = excluded.char_count,
+			alnum_count = excluded.alnum_count,
+			unique_word_count = excluded.unique_word_count,
+			content_hash = excluded.content_hash,
+			milvus_synced = CASE
+				WHEN chunks.content_hash IS NULL OR chunks.content_hash IS NOT excluded.content_hash THEN 0
+				ELSE chunks.milvus_synced
+			END
 	`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("preparing statement: %w", err)
@@ -362,6 +474,8 @@ func loadChunksFromDB(ctx context.Context, db *sql.DB, cfg *ragconfig.Config) (i
 			indexable++
 		}
 
+		contentHash := computeContentHash(chunk.Text, string(messageIDsJSON), chunk.ThreadName, string(participantIDsJSON), string(participantNamesJSON), chunk.IsIndexable)
+
 		_, err := stmt.ExecContext(ctx,
 			chunk.ChunkID,
 			chunk.ThreadID,
@@ -379,6 +493,7 @@ func loadChunksFromDB(ctx context.Context, db *sql.DB, cfg *ragconfig.Config) (i
 			chunk.CharCount,
 			chunk.AlnumCount,
 			chunk.UniqueWordCount,
+			contentHash,
 		)
 		if err != nil {
 			return fmt.Errorf("inserting chunk %s: %w", chunk.ChunkID, err)
