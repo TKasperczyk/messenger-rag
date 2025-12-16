@@ -4,6 +4,7 @@
 
 set -e
 cd "$(dirname "$0")"
+PROJECT_ROOT="$(pwd)"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -102,7 +103,7 @@ done
 # Start web frontend with demo config
 echo -n "Starting web frontend (port 5173)... "
 cd web
-RAG_CONFIG=../demo_rag.yaml pnpm dev > /tmp/web_server.log 2>&1 &
+RAG_CONFIG="$PROJECT_ROOT/demo_rag.yaml" pnpm dev > /tmp/web_server.log 2>&1 &
 WEB_PID=$!
 cd ..
 

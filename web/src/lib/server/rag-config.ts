@@ -10,6 +10,9 @@ import path from 'node:path';
 import YAML from 'yaml';
 
 export interface RagConfig {
+	database?: {
+		sqlite: string;
+	};
 	milvus: {
 		address: string;
 		chunkCollection: string;
@@ -61,6 +64,7 @@ export interface RagConfig {
 }
 
 let cachedConfig: RagConfig | null = null;
+let cachedConfigPath: string | null = null;
 
 function findRagYamlPath(startDir: string): string {
 	// Allow override via environment variable
@@ -112,6 +116,15 @@ function asBoolean(value: unknown, name: string): boolean {
 function parseRagYaml(contents: string): RagConfig {
 	const root = asObject(YAML.parse(contents), 'root');
 
+	// Database section is optional
+	let database: { sqlite: string } | undefined;
+	if (root.database != null) {
+		const dbObj = asObject(root.database, 'database');
+		database = {
+			sqlite: asString(dbObj.sqlite, 'database.sqlite')
+		};
+	}
+
 	const milvus = asObject(root.milvus, 'milvus');
 	const milvusIndex = asObject(milvus.index, 'milvus.index');
 	const milvusSearch = asObject(milvus.search, 'milvus.search');
@@ -146,6 +159,7 @@ function parseRagYaml(contents: string): RagConfig {
 	}
 
 	return {
+		database,
 		milvus: {
 			address: asString(milvus.address, 'milvus.address'),
 			chunkCollection: asString(milvus.chunk_collection, 'milvus.chunk_collection'),
@@ -211,10 +225,17 @@ function parseRagYaml(contents: string): RagConfig {
 
 export function getRagConfig(): RagConfig {
 	if (cachedConfig) return cachedConfig;
-	const configPath = findRagYamlPath(process.cwd());
-	const contents = fs.readFileSync(configPath, 'utf8');
+	cachedConfigPath = findRagYamlPath(process.cwd());
+	const contents = fs.readFileSync(cachedConfigPath, 'utf8');
 	cachedConfig = parseRagYaml(contents);
 	return cachedConfig;
+}
+
+export function getRagConfigPath(): string {
+	if (!cachedConfigPath) {
+		getRagConfig(); // This will set cachedConfigPath
+	}
+	return cachedConfigPath!;
 }
 
 export const ragConfig: RagConfig = getRagConfig();

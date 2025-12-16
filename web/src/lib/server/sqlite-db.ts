@@ -1,13 +1,23 @@
 import Database from 'better-sqlite3';
-import { DB_PATH } from '$env/static/private';
+import path from 'node:path';
+import { getRagConfig, getRagConfigPath } from './rag-config';
 
-const dbPath = DB_PATH || '../meta-bridge/messenger.db';
+function resolveDbPath(): string {
+	const config = getRagConfig();
+	const configPath = getRagConfigPath();
+	const configDir = path.dirname(configPath);
+
+	// database.sqlite in rag.yaml is relative to the config file location
+	return path.resolve(configDir, config.database?.sqlite || 'messenger.db');
+}
 
 let db: Database.Database | null = null;
+let resolvedDbPath: string | null = null;
 
 export function getDb(): Database.Database {
 	if (!db) {
-		db = new Database(dbPath, { readonly: true });
+		resolvedDbPath = resolveDbPath();
+		db = new Database(resolvedDbPath, { readonly: true });
 		// Best-effort: enabling WAL on a readonly connection can throw.
 		// WAL should be configured by the writer side (Go tooling) anyway.
 		try {
@@ -20,6 +30,8 @@ export function getDb(): Database.Database {
 }
 
 export function getDbPath(): string {
-	return dbPath;
+	if (!resolvedDbPath) {
+		resolvedDbPath = resolveDbPath();
+	}
+	return resolvedDbPath;
 }
-
