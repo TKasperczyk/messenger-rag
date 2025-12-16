@@ -5,7 +5,6 @@
 [![SvelteKit](https://img.shields.io/badge/SvelteKit-2-FF3E00?logo=svelte&logoColor=white)](https://kit.svelte.dev/)
 [![Milvus](https://img.shields.io/badge/Milvus-2.4-00A1EA)](https://milvus.io/)
 
-<!-- TODO: Add demo GIF showing semantic search in action -->
 ![Demo](docs/demo.gif)
 
 I have 500k+ Messenger messages going back over a decade. Facebook's built-in search is practically useless - it only matches exact keywords and can't find anything unless you remember the exact words someone used.
