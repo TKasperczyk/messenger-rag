@@ -65,20 +65,25 @@ for i in {1..30}; do
     sleep 1
 done
 
+# Create demo config (separate DB and Milvus collection)
+echo -n "Creating demo config... "
+sed -e 's/messenger_message_chunks_v2/demo_chunks/g' \
+    -e 's/sqlite: "messenger.db"/sqlite: "demo.db"/g' \
+    rag.yaml > demo_rag.yaml
+echo -e "${GREEN}OK${NC}"
+
 # Generate chunks and index
 echo -n "Generating chunks... "
 ./bin/fts5-setup -db demo.db --from-db > /dev/null 2>&1
 echo -e "${GREEN}OK${NC}"
 
 echo -n "Indexing to Milvus... "
-# Use a separate collection for demo to not interfere with real data
-sed 's/messenger_message_chunks_v2/demo_chunks/g' rag.yaml > /tmp/demo_rag.yaml
-./bin/milvus-index -db demo.db -config /tmp/demo_rag.yaml --drop > /dev/null 2>&1
+./bin/milvus-index -db demo.db -config demo_rag.yaml --drop > /dev/null 2>&1
 echo -e "${GREEN}OK${NC}"
 
 # Start RAG server with demo config
 echo -n "Starting RAG server (port 8090)... "
-./bin/rag-server -config /tmp/demo_rag.yaml -db demo.db > /tmp/rag_server.log 2>&1 &
+./bin/rag-server -config demo_rag.yaml > /tmp/rag_server.log 2>&1 &
 RAG_PID=$!
 
 for i in {1..10}; do
@@ -94,10 +99,10 @@ for i in {1..10}; do
     sleep 1
 done
 
-# Start web frontend
+# Start web frontend with demo config
 echo -n "Starting web frontend (port 5173)... "
 cd web
-VITE_DB_PATH=../demo.db pnpm dev > /tmp/web_server.log 2>&1 &
+RAG_CONFIG=../demo_rag.yaml pnpm dev > /tmp/web_server.log 2>&1 &
 WEB_PID=$!
 cd ..
 

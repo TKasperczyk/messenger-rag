@@ -63,6 +63,13 @@ export interface RagConfig {
 let cachedConfig: RagConfig | null = null;
 
 function findRagYamlPath(startDir: string): string {
+	// Allow override via environment variable
+	const envPath = process.env.RAG_CONFIG;
+	if (envPath) {
+		if (fs.existsSync(envPath)) return envPath;
+		throw new Error(`RAG_CONFIG points to non-existent file: ${envPath}`);
+	}
+
 	let current = startDir;
 	for (;;) {
 		const candidate = path.join(current, 'rag.yaml');

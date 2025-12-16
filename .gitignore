@@ -17,6 +17,9 @@ meta-bridge/chunk-generator
 *.db-wal
 *.db.bak
 
+# Generated demo config
+demo_rag.yaml
+
 # Large generated data
 chunks.jsonl
 
