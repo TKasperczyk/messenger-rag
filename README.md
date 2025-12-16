@@ -35,6 +35,16 @@ So I built this. It's a local semantic search system that actually understands w
 
 It works because instead of matching keywords, it searches by *meaning*. The embedding model understands that "dog" and "furry friend" are related, that "angry" and "frustrated" are similar, even if you never used those exact words.
 
+## Try it (with sample data)
+
+Don't want to connect your real Messenger? Try the demo with fake conversations:
+
+```bash
+./demo.sh
+```
+
+This imports sample conversations and starts everything. Try searching for "camping trip with rain" or "grandma's dessert recipe".
+
 ## What's inside
 
 - **Real-time sync** - Connects to Messenger via WebSocket protocol, captures new messages as they arrive
