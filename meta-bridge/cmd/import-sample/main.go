@@ -117,7 +117,7 @@ func createSchema(ctx context.Context, db *sql.DB) error {
 		mute_until INTEGER,
 		is_archived BOOLEAN DEFAULT FALSE,
 		is_pinned BOOLEAN DEFAULT FALSE,
-		last_activity_timestamp_ms INTEGER,
+		last_activity_ms INTEGER,
 		picture_url TEXT,
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
@@ -164,6 +164,11 @@ func createSchema(ctx context.Context, db *sql.DB) error {
 		SELECT NEW.rowid, NEW.text
 		WHERE NEW.text IS NOT NULL AND NEW.text != '';
 	END;
+
+	CREATE TABLE sync_metadata (
+		key TEXT PRIMARY KEY,
+		value TEXT
+	);
 	`
 
 	_, err := db.ExecContext(ctx, schema)
@@ -200,7 +205,7 @@ func importData(ctx context.Context, db *sql.DB, sample *SampleData) error {
 
 	// Insert threads and messages
 	threadStmt, err := db.PrepareContext(ctx, `
-		INSERT INTO threads (id, name, thread_type, last_activity_timestamp_ms, created_at, updated_at)
+		INSERT INTO threads (id, name, thread_type, last_activity_ms, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
@@ -257,5 +262,16 @@ func importData(ctx context.Context, db *sql.DB, sample *SampleData) error {
 	}
 
 	fmt.Printf("Imported %d messages across %d threads\n", msgCount, len(sample.Threads))
+
+	// Set demo user as current user (ID 1006 = "Demo User" in sample data)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO sync_metadata (key, value) VALUES
+			('current_user_id', '1006'),
+			('current_user_name', 'Demo User')
+	`)
+	if err != nil {
+		return fmt.Errorf("inserting sync_metadata: %w", err)
+	}
+
 	return nil
 }
