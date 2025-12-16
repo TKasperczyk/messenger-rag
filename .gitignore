@@ -22,6 +22,7 @@ chunks.jsonl
 
 # Sensitive data
 cookies.json
+cookies.txt
 *.json.bak
 
 # Go build cache
