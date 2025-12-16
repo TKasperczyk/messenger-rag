@@ -2,7 +2,7 @@
 
 A local Messenger data capture and semantic search system. Connects to Facebook Messenger via WebSocket, stores messages in SQLite with full-text search, and provides vector-based semantic search via Milvus.
 
-Built on the protocol library from [mautrix-meta](https://github.com/mautrix/meta), with Matrix dependencies removed.
+Built on the protocol library from [mautrix-meta](https://github.com/mautrix/meta) by [Tulir Asokan](https://github.com/tulir), with Matrix dependencies removed.
 
 ## Features
 

@@ -162,9 +162,16 @@ pnpm build
 
 ## Credits
 
-- Protocol library based on [mautrix-meta](https://github.com/mautrix/meta) (AGPL-3.0)
-- Embedding model: [sdadas/mmlw-roberta-large](https://huggingface.co/sdadas/mmlw-roberta-large)
+This project builds upon the excellent work of others:
+
+- **[mautrix-meta](https://github.com/mautrix/meta)** by [Tulir Asokan](https://github.com/tulir) and the [mautrix](https://github.com/mautrix) team - The Facebook Messenger protocol implementation (`pkg/messagix/`) is derived from their Matrix-Facebook bridge. Licensed under AGPL-3.0.
+  - Documentation: [docs.mau.fi](https://docs.mau.fi/bridges/go/meta/)
+  - Matrix room: [#meta:maunium.net](https://matrix.to/#/#meta:maunium.net)
+- **[sdadas/mmlw-roberta-large](https://huggingface.co/sdadas/mmlw-roberta-large)** - Polish embedding model used for semantic search
+- **[Milvus](https://milvus.io/)** - Open-source vector database
 
 ## License
 
 AGPL-3.0 - See [LICENSE](LICENSE)
+
+This license is inherited from mautrix-meta and applies to the entire project.
