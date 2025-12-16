@@ -1,177 +1,173 @@
 # Messenger RAG
 
-A local, privacy-focused semantic search system for your Facebook Messenger history. Captures messages in real-time via WebSocket, stores them in SQLite with full-text search, and provides powerful vector-based semantic search via Milvus.
+<!-- TODO: Add demo GIF showing semantic search in action -->
+![Demo](docs/demo.gif)
 
-## Features
+I have 500k+ Messenger messages going back over a decade. Facebook's built-in search is practically useless - it only matches exact keywords, doesn't understand Polish, and can't find anything unless you remember the exact words someone used.
 
-- **Real-time message capture** - Connects to Messenger via WebSocket protocol
-- **E2EE decryption** - Decrypts end-to-end encrypted messages using Signal protocol
-- **Hybrid search** - Combines BM25 keyword search with semantic vector search
-- **Modern web UI** - SvelteKit frontend for browsing and searching your archive
-- **Incremental sync** - Only re-indexes changed content, not the entire archive
-- **Fully local** - All data stays on your machine, no cloud services required
+So I built this. It's a local semantic search system that actually understands what you're looking for.
 
-## Privacy Warning
+## The problem this solves
 
-This tool accesses your Facebook Messenger data using your browser session cookies. Please be aware:
-
-- **Your `cookies.json` contains your Facebook session** - Treat it like a password
-- **The SQLite database contains all your messages** - Keep it secure
-- **Never expose the servers to the internet** - They bind to `127.0.0.1` by default for a reason
-- **This may violate Facebook's Terms of Service** - Use at your own risk
-
-## Architecture
-
+**Messenger search:**
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Web Frontend  │────▶│   RAG Server    │────▶│     Milvus      │
-│   (SvelteKit)   │     │      (Go)       │     │  (Vector Store) │
-└─────────────────┘     └────────┬────────┘     └─────────────────┘
-                                 │
-                                 ▼
-┌─────────────────┐     ┌─────────────────┐
-│ Embedding Server│     │     SQLite      │
-│    (Python)     │     │  (FTS5 + Data)  │
-└─────────────────┘     └─────────────────┘
+"camping trip" → 0 results
+"namiot" → 47 results, none relevant
+"that weekend in the mountains" → lol no
 ```
 
-## Quick Start
+**This tool:**
+```
+"that time we went camping and it rained all night"
+  → finds the conversation about "biwak pod Babią Górą" where you complained about the wet sleeping bag
 
-### Prerequisites
+"recipe someone sent me for that cake"
+  → finds a 3-year-old message with a sernik recipe from your aunt
 
-- **Go 1.21+** with CGO enabled
-- **Node.js 20+** and pnpm
-- **Python 3.10+** with venv
-- **Docker** (for Milvus)
-- **4GB+ RAM** for the embedding model
+"who recommended that sci-fi book"
+  → finds Kasia mentioning "Solaris" in a thread about movies
+```
 
-### 1. Start Milvus
+It works because instead of matching keywords, it searches by *meaning*. The Polish embedding model understands that "pies" and "czworonożny przyjaciel" are related, even if you never used those exact words.
 
+## What's inside
+
+- **Real-time sync** - Connects to Messenger via WebSocket protocol, captures new messages as they arrive
+- **E2EE support** - Decrypts end-to-end encrypted conversations using Signal protocol
+- **Hybrid search** - Combines semantic vectors (meaning) with BM25 (keywords) for best results
+- **Web UI** - Browse threads, search everything, see context around results
+- **Fully local** - Your data never leaves your machine. No cloud, no API keys, no subscriptions.
+
+## How it works
+
+```
+You: "that argument about veganism"
+                ↓
+        [Embedding Model]
+        Converts to 1024-dim vector
+                ↓
+        [Milvus Vector DB]
+        Finds semantically similar chunks
+                ↓
+        [SQLite FTS5]
+        Also does keyword matching
+                ↓
+        [Hybrid Ranking]
+        Combines both, returns best matches
+                ↓
+Found: Conversation from 2024 where Wojtek roasted
+       Tomek about Beyond Meat for the 47th time
+```
+
+## Privacy & legal stuff
+
+**Your data stays local.** Everything runs on your machine - SQLite database, Milvus vector store, embedding model. Nothing is sent anywhere.
+
+**But be careful:**
+- Your `cookies.json` is essentially your Facebook password. Treat it accordingly.
+- The SQLite database contains all your messages in plaintext. Encrypt your disk.
+- All servers bind to `127.0.0.1` by default. Don't expose them to the internet.
+- This probably violates Facebook's ToS. Use at your own risk.
+
+## Getting started
+
+### You'll need
+
+- Go 1.21+ (with CGO)
+- Node.js 20+ and pnpm
+- Python 3.10+
+- Docker (for Milvus)
+- ~4GB RAM for the embedding model
+
+### Quick setup
+
+**1. Start Milvus** (vector database)
 ```bash
 docker run -d --name milvus-standalone \
   -p 19530:19530 -p 9091:9091 \
-  -v milvus-data:/var/lib/milvus \
   milvusdb/milvus:v2.4.0 standalone
 ```
 
-### 2. Setup Python environment
-
+**2. Set up Python env** (for embeddings)
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install sentence-transformers flask
 ```
 
-### 3. Get your cookies
+**3. Get your cookies**
 
-1. Log into [messenger.com](https://messenger.com)
-2. Export cookies using a browser extension (Netscape/cookies.txt format)
-3. Convert to JSON:
-   ```bash
-   cd meta-bridge
-   go build ./cmd/cookie-converter
-   ./cookie-converter ../cookies.txt ../cookies.json
-   ```
-
-### 4. Import your history (optional)
-
-Download your data from Facebook ([Settings > Your Information > Download Your Information](https://www.facebook.com/dyi)) and import:
-
+Log into messenger.com, export cookies with a browser extension (Netscape format), then:
 ```bash
-cd meta-bridge
+cd meta-bridge && go build ./cmd/cookie-converter
+./cookie-converter ../cookies.txt ../cookies.json
+```
+
+**4. Import your history** (optional but recommended)
+
+Download your data from [Facebook](https://www.facebook.com/dyi) (Settings → Your Information → Download Your Information), then:
+```bash
 go build ./cmd/import-export
 ./import-export -zip ~/Downloads/facebook-export.zip -db ../messenger.db
 ```
 
-### 5. Start everything
-
+**5. Run it**
 ```bash
-./start.sh           # Basic: web UI + search
-./start.sh --sync    # With live message capture
+./start.sh              # Just search
+./start.sh --sync       # Search + live capture
 ```
 
-Open http://localhost:5173
-
-## Components
-
-| Component | Description | Port |
-|-----------|-------------|------|
-| `web/` | SvelteKit frontend | 5173 |
-| `meta-bridge/cmd/rag-server` | Search API server | 8090 |
-| `scripts/embed_server.py` | Sentence-transformers embeddings | 1235 |
-| `meta-bridge/cmd/messenger-cli` | Real-time message capture | - |
-| `meta-bridge/cmd/fts5-setup` | SQLite chunking + FTS5 indexing | - |
-| `meta-bridge/cmd/milvus-index` | Vector embedding + Milvus indexing | - |
+Open http://localhost:5173 and start searching.
 
 ## Configuration
 
-Edit `rag.yaml` to customize:
+Everything is in `rag.yaml`. The defaults work fine, but you can tweak:
 
 ```yaml
-database:
-  sqlite: messenger.db
-
-milvus:
-  address: localhost:19530
-  chunk_collection: messenger_message_chunks_v2
-
 embedding:
-  base_url: http://127.0.0.1:1235/v1
-  model: mmlw-roberta-large
+  model: mmlw-roberta-large  # Best Polish model, change for other languages
   dimension: 1024
 
 search:
   default_limit: 20
-  context_radius: 2
+  context_radius: 2          # Messages before/after each result
+
+quality:
+  min_chars: 250             # Skip tiny chunks
+  min_unique_words: 8        # Skip "haha ok" conversations
 ```
 
-## Manual Operations
+## Advanced usage
 
-### Re-index everything
-
+**Full reindex** (after config changes):
 ```bash
-# Regenerate chunks and FTS5 index
 ./bin/fts5-setup -db messenger.db --from-db
-
-# Re-embed all chunks (drops Milvus collection)
 ./bin/milvus-index -db messenger.db --drop
 ```
 
-### Incremental sync
-
+**Incremental sync** (daily use):
 ```bash
-# Only processes new/changed chunks
 ./bin/fts5-setup -db messenger.db --from-db
 ./bin/milvus-index -db messenger.db
 ```
 
-## Building from source
+Only new/changed chunks get re-embedded. A 500k message database takes ~10 minutes for full reindex, <1 second for incremental.
 
-```bash
-# Go binaries (with FTS5 support)
-cd meta-bridge
-CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" CGO_LDFLAGS="-lm" \
-  go build -tags "fts5" -o ../bin/rag-server ./cmd/rag-server
-# Repeat for other commands...
+## Tech stack
 
-# Web frontend
-cd web
-pnpm install
-pnpm build
-```
+| What | Why |
+|------|-----|
+| [mautrix-meta](https://github.com/mautrix/meta) | Facebook protocol (WebSocket, E2EE) |
+| [Milvus](https://milvus.io/) | Vector similarity search |
+| [sdadas/mmlw-roberta-large](https://huggingface.co/sdadas/mmlw-roberta-large) | Polish embedding model (swap for your language) |
+| SQLite + FTS5 | Storage + keyword search |
+| SvelteKit | Web UI |
+| Go | Everything else |
 
 ## Credits
 
-This project builds upon the excellent work of others:
-
-- **[mautrix-meta](https://github.com/mautrix/meta)** by [Tulir Asokan](https://github.com/tulir) and the [mautrix](https://github.com/mautrix) team - The Facebook Messenger protocol implementation (`pkg/messagix/`) is derived from their Matrix-Facebook bridge. Licensed under AGPL-3.0.
-  - Documentation: [docs.mau.fi](https://docs.mau.fi/bridges/go/meta/)
-  - Matrix room: [#meta:maunium.net](https://matrix.to/#/#meta:maunium.net)
-- **[sdadas/mmlw-roberta-large](https://huggingface.co/sdadas/mmlw-roberta-large)** - Polish embedding model used for semantic search
-- **[Milvus](https://milvus.io/)** - Open-source vector database
+The Messenger protocol implementation is based on [mautrix-meta](https://github.com/mautrix/meta) by [Tulir Asokan](https://github.com/tulir). Seriously impressive reverse-engineering work. Check out their [Matrix bridge](https://docs.mau.fi/bridges/go/meta/) if you want Messenger in Matrix.
 
 ## License
 
-AGPL-3.0 - See [LICENSE](LICENSE)
-
-This license is inherited from mautrix-meta and applies to the entire project.
+AGPL-3.0 (inherited from mautrix-meta)
