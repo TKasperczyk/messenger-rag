@@ -1,5 +1,10 @@
 # Messenger RAG
 
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
+[![Go 1.21+](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![SvelteKit](https://img.shields.io/badge/SvelteKit-2-FF3E00?logo=svelte&logoColor=white)](https://kit.svelte.dev/)
+[![Milvus](https://img.shields.io/badge/Milvus-2.4-00A1EA)](https://milvus.io/)
+
 <!-- TODO: Add demo GIF showing semantic search in action -->
 ![Demo](docs/demo.gif)
 
